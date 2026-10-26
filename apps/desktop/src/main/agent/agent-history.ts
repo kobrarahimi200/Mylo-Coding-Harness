@@ -80,6 +80,18 @@ export function readAgentHistory(sessionId: string): {
     activeRun = undefined;
   };
   for (const entry of manager.getBranch()) {
+    if (entry.type === "custom" && entry.customType === "mylo.harness") {
+      const event = entry.data as AgentEvent;
+      // Older harness versions stored a generic planning failure. The native
+      // assistant response retains the provider's actual cause; replay that cause.
+      emit(
+        event.type === "harness.phase" && event.phase === "failed" && activeRun?.error
+          ? { ...event, detail: activeRun.error }
+          : event,
+        entry.timestamp,
+      );
+      continue;
+    }
     if (entry.type === "compaction") {
       emit(
         {

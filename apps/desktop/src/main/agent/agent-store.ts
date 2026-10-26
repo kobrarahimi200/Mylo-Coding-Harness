@@ -137,7 +137,7 @@ export function discoverAgentSessions(): Promise<void> {
 async function discoverSessions(): Promise<void> {
   const directories = new Set([
     sessionDirectory(process.cwd()),
-    ...listWorkspaces().map((workspace) => sessionDirectory(workspace.rootPath)),
+    ...listWorkspaces(true).map((workspace) => sessionDirectory(workspace.rootPath)),
   ]);
   const lists = await Promise.all(
     [...directories].map((directory) => SessionManager.listAll(directory)),
@@ -145,7 +145,7 @@ async function discoverSessions(): Promise<void> {
   const entries = [...new Map(lists.flat().map((entry) => [entry.path, entry])).values()];
   await syncSessionWorkspaces(entries);
   const workspaces = new Map(
-    listWorkspaces().map((workspace) => [resolve(workspace.rootPath), workspace]),
+    listWorkspaces(true).map((workspace) => [resolve(workspace.rootPath), workspace]),
   );
   const byFile = new Map([...sessions.values()].map((info) => [info.piSessionFile, info]));
   const files = new Set(entries.map((entry) => entry.path));

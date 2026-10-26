@@ -37,7 +37,7 @@ describe("beginInitialAppHydration", () => {
       settled = true;
     });
 
-    expect(source.workspace.list).toHaveBeenCalledOnce();
+    expect(source.workspace.list).not.toHaveBeenCalled();
     expect(source.agent.list).toHaveBeenCalledOnce();
     expect(source.model.settings).toHaveBeenCalledOnce();
 
@@ -48,6 +48,9 @@ describe("beginInitialAppHydration", () => {
 
     modelSettings.resolve({ providers: [], models: [], errors: [] });
     await hydration.settled;
+    expect(source.workspace.list).toHaveBeenCalledOnce();
+    await expect(hydration.workspaces).resolves.toEqual([]);
+    await expect(hydration.sessions).resolves.toEqual([]);
     expect(settled).toBe(true);
   });
 });

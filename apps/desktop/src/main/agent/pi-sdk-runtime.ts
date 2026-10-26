@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import {
   type AgentSession,
   createAgentSession,
@@ -16,8 +16,17 @@ import type {
   ModelInfo,
 } from "../../shared/contracts";
 import { deriveSessionTitle, shouldReplaceSessionTitle } from "../../shared/session-title";
+import { resolveWithin } from "../files/path-within";
 import { preparePromptImage } from "../files/prompt-image";
-import { denyPendingQuestionRequestsForSession } from "../interaction/question-broker";
+import { createHarnessApprovalExtension } from "../harness/approval-policy";
+import { auditHarnessEvent } from "../harness/audit-log";
+import { approveTaskPlan, parseTaskPlan } from "../harness/planning";
+import { createValidationRetryPrompt, shouldRetryValidation } from "../harness/retry-policy";
+import { findValidationCommands, runValidation } from "../harness/validation";
+import {
+  denyPendingQuestionRequestsForSession,
+  requestQuestions,
+} from "../interaction/question-broker";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { maybeNotifyAgentEvent } from "../notifications/agent-notifications";
 import {
@@ -94,6 +103,14 @@ export class PiSdkRuntime implements AgentRuntime {
   private disposePromises = new Map<string, Promise<void>>();
   private runObservations = new Map<string, RunObservation>();
   private cancellingRuns = new Set<string>();
+  private approvedPlans = new Map<string, import("../harness/planning").TaskPlan>();
+  private reviewedChanges = new Map<
+    string,
+    Map<string, { path: string; before: string; after: string }>
+  >();
+  private planningSessions = new Set<string>();
+  private validationControllers = new Map<string, AbortController>();
+  private changedSessions = new Set<string>();
   private presentations = new Map<
     string,
     {
@@ -107,6 +124,21 @@ export class PiSdkRuntime implements AgentRuntime {
 
   private emitToWindow(window: BrowserWindowType): EmitAgentEvent {
     return (event) => {
+      if (event.type === "harness.change") {
+        const changes = this.reviewedChanges.get(event.sessionId) ?? new Map();
+        const previous = changes.get(event.path);
+        changes.set(event.path, {
+          path: event.path,
+          before: previous?.before ?? event.before,
+          after: event.after,
+        });
+        this.reviewedChanges.set(event.sessionId, changes);
+      }
+      if (event.type.startsWith("harness.")) {
+        this.sessions
+          .get(event.sessionId)
+          ?.session.sessionManager.appendCustomEntry("mylo.harness", event);
+      }
       appendAgentView(event);
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
       maybeNotifyAgentEvent(window, event);
@@ -221,6 +253,14 @@ export class PiSdkRuntime implements AgentRuntime {
             pi.on("thinking_level_select", publish);
           },
         },
+        createHarnessApprovalExtension({
+          cwd,
+          sessionId,
+          emit,
+          getPlan: () => this.approvedPlans.get(sessionId),
+          isPlanning: () => this.planningSessions.has(sessionId),
+          onCodeChanged: () => this.changedSessions.add(sessionId),
+        }),
       ],
       { cwd, mode: "rpc", hasUI: true, ui: createDialogUI(sessionId, emit) },
     );
@@ -630,6 +670,16 @@ export class PiSdkRuntime implements AgentRuntime {
       console.info(
         `[modus-timing] composeTurnMessage done +${Date.now() - observation.startedAt}ms`,
       );
+      const plan = await this.planTask(runtimeSession, message);
+      this.runObservations.set(input.sessionId, observation);
+      if (this.cancellingRuns.has(run.id)) throw new Error("Prompt cancelled");
+      this.approvedPlans.set(input.sessionId, plan);
+      runtimeSession.emit({
+        type: "harness.phase",
+        sessionId: input.sessionId,
+        phase: "executing",
+        detail: "Executing the approved plan with Pi tools.",
+      });
       await runtimeSession.session.prompt(message, {
         source: "rpc",
         ...(delivery !== "normal"
@@ -637,6 +687,43 @@ export class PiSdkRuntime implements AgentRuntime {
           : {}),
       });
       this.emitContextUsage(runtimeSession);
+      if (!this.cancellingRuns.has(run.id)) await this.validateAndCorrect(runtimeSession, run.id);
+      if (!this.cancellingRuns.has(run.id) && observation.assistant?.stopReason !== "error") {
+        runtimeSession.emit({
+          type: "harness.phase",
+          sessionId: input.sessionId,
+          phase: "review",
+          detail: "Review the file diffs and validation results before accepting.",
+        });
+        const review = await requestQuestions({
+          sessionId: input.sessionId,
+          emit: runtimeSession.emit,
+          questions: [
+            {
+              codeChanges: [...(this.reviewedChanges.get(input.sessionId)?.values() ?? [])].map(
+                (change) => {
+                  let after = change.after;
+                  try {
+                    const path = resolveWithin(runtimeSession.info.cwd, change.path);
+                    resolveWithin(realpathSync(runtimeSession.info.cwd), realpathSync(path));
+                    after = readFileSync(path, "utf8").slice(0, 128000);
+                  } catch {
+                    /* Deleted files retain the last approved proposal. */
+                  }
+                  return { ...change, after };
+                },
+              ),
+              id: "accept-task",
+              header: "Accept this task result?",
+              detail:
+                "Review the Diff and Tests panels. File changes already approved individually remain on disk. You can keep them for manual review instead of marking the task accepted.",
+              options: [{ label: "Accept result" }, { label: "Keep for manual review" }],
+            },
+          ],
+        });
+        if (review.skipped || review.answers[0]?.selected[0] !== "Accept result")
+          throw new Error("Task left for manual review; file changes were preserved.");
+      }
       const currentRun = getAgentRun(run.id);
       if (currentRun?.status === "running") {
         const cancelled =
@@ -657,6 +744,13 @@ export class PiSdkRuntime implements AgentRuntime {
             message: turnError,
           });
         } else {
+          runtimeSession.emit({
+            type: "harness.phase",
+            sessionId: input.sessionId,
+            phase: "completed",
+            detail:
+              "Task result accepted. Check validation results for checks performed or skipped.",
+          });
           updateAgentRunStatus(run.id, "completed");
           runtimeSession.emit({
             type: "run.completed",
@@ -689,6 +783,22 @@ export class PiSdkRuntime implements AgentRuntime {
       });
       throw error;
     } finally {
+      await auditHarnessEvent({
+        type: "run.result",
+        sessionId: input.sessionId,
+        outcome: getAgentRun(run.id)?.status ?? "unknown",
+      });
+      const outcome = getAgentRun(run.id)?.status;
+      if (outcome === "failed" || outcome === "cancelled")
+        runtimeSession.emit({
+          type: "harness.phase",
+          sessionId: input.sessionId,
+          phase: outcome,
+          detail: getAgentRun(run.id)?.error ?? "Task cancelled.",
+        });
+      this.reviewedChanges.delete(input.sessionId);
+      this.approvedPlans.delete(input.sessionId);
+      this.changedSessions.delete(input.sessionId);
       this.presentations.delete(input.sessionId);
       this.runObservations.delete(input.sessionId);
       this.cancellingRuns.delete(run.id);
@@ -702,6 +812,144 @@ export class PiSdkRuntime implements AgentRuntime {
         sessionId: input.sessionId,
         status: { type: "idle" },
       });
+    }
+  }
+
+  private async planTask(
+    runtime: SdkRuntimeSession,
+    request: string,
+  ): Promise<import("../../shared/harness").TaskPlan> {
+    const { session, info, emit } = runtime;
+    emit({
+      type: "harness.phase",
+      sessionId: info.id,
+      phase: "planning",
+      detail: "Pi is exploring the repository with read-only tools.",
+    });
+    this.planningSessions.add(info.id);
+    const tools = session.getActiveToolNames();
+    try {
+      session.setActiveToolsByName(["read", "ls", "find", "grep"]);
+      await session.prompt(
+        `${request}\n\nPLAN ONLY: Explore relevant repository files using read-only tools. Do not edit or execute commands. Return only JSON: {"goal":"specific goal","steps":["concrete steps referencing actual files and validation commands"]}.`,
+        { source: "extension" },
+      );
+      const last = session.messages.findLast((message) => message.role === "assistant");
+      if (!last || last.role !== "assistant")
+        throw new Error("Pi returned no assistant response while planning.");
+      if (last.stopReason === "aborted") throw new Error("Planning cancelled.");
+      if (last.stopReason === "error")
+        throw new Error(
+          `Pi planning failed: ${last.errorMessage || "The model provider returned an error without details."}`,
+        );
+      const text = last.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      return await approveTaskPlan(parseTaskPlan(text), info.id, emit);
+    } finally {
+      this.planningSessions.delete(info.id);
+      session.setActiveToolsByName(tools);
+    }
+  }
+
+  private async validateAndCorrect(runtime: SdkRuntimeSession, runId: string): Promise<void> {
+    const { info, session, emit } = runtime;
+    const commands = await findValidationCommands(info.cwd);
+    if (!commands.length) {
+      emit({
+        type: "harness.validation",
+        sessionId: info.id,
+        attempt: 0,
+        label: "Project checks",
+        status: "skipped",
+        output: "No supported validation scripts found. Validation was not performed.",
+        exitCode: null,
+      });
+      return;
+    }
+    const approval = await requestQuestions({
+      sessionId: info.id,
+      emit,
+      questions: [
+        {
+          id: "run-workspace-tests",
+          header: "Run workspace validation?",
+          detail: commands.map((command) => command.label).join("\n"),
+          options: [{ label: "Run checks" }, { label: "Skip" }],
+        },
+      ],
+    });
+    if (approval.skipped || approval.answers[0]?.selected[0] !== "Run checks") {
+      emit({
+        type: "harness.validation",
+        sessionId: info.id,
+        attempt: 0,
+        label: "Project checks",
+        status: "skipped",
+        output: "Validation skipped by the user.",
+        exitCode: null,
+      });
+      return;
+    }
+    const controller = new AbortController();
+    this.validationControllers.set(info.id, controller);
+    try {
+      for (let attempt = 0; attempt <= 3; attempt++) {
+        if (this.cancellingRuns.has(runId)) throw new Error("Task cancelled");
+        emit({
+          type: "harness.phase",
+          sessionId: info.id,
+          phase: "validating",
+          detail: `Running project checks (attempt ${attempt + 1}/4).`,
+        });
+        const failures: string[] = [];
+        for (const command of commands) {
+          emit({
+            type: "harness.validation",
+            sessionId: info.id,
+            attempt,
+            label: command.label,
+            status: "running",
+            output: "",
+            exitCode: null,
+          });
+          const result = await runValidation(command, undefined, controller.signal);
+          emit({
+            type: "harness.validation",
+            sessionId: info.id,
+            attempt,
+            label: command.label,
+            status: result.passed ? "passed" : "failed",
+            output: result.output,
+            exitCode: result.exitCode,
+          });
+          await auditHarnessEvent({
+            type: "validation",
+            sessionId: info.id,
+            outcome: result.passed ? "passed" : "failed",
+            attempt,
+            detail: `${command.label}: exit=${result.exitCode}`,
+          });
+          if (!result.passed)
+            failures.push(`${command.label} (exit ${result.exitCode}):\n${result.output}`);
+          if (controller.signal.aborted) throw new Error("Task cancelled");
+        }
+        if (!failures.length) return;
+        if (!shouldRetryValidation(attempt, false))
+          throw new Error("Workspace validation failed after three correction attempts.");
+        emit({
+          type: "harness.phase",
+          sessionId: info.id,
+          phase: "correcting",
+          detail: `Pi correction ${attempt + 1}/3.`,
+        });
+        await session.prompt(createValidationRetryPrompt(attempt + 1, failures.join("\n\n")), {
+          source: "extension",
+        });
+      }
+    } finally {
+      this.validationControllers.delete(info.id);
     }
   }
 
@@ -821,6 +1069,20 @@ export class PiSdkRuntime implements AgentRuntime {
     this.emitUserMessage(runtimeSession.emit, input, userMessageId);
     try {
       const message = await this.composeTurnMessage(runtimeSession, input);
+      const currentPlan = this.approvedPlans.get(input.sessionId);
+      if (!currentPlan)
+        throw new Error(
+          "Wait for the current task plan or stop the agent before sending another task.",
+        );
+      const plan = await approveTaskPlan(
+        {
+          goal: currentPlan.goal,
+          steps: [...currentPlan.steps, `Additional user instruction: ${input.message}`],
+        },
+        input.sessionId,
+        runtimeSession.emit,
+      );
+      this.approvedPlans.set(input.sessionId, plan);
       await runtimeSession.session.prompt(message, {
         source: "rpc",
         streamingBehavior: delivery === "follow-up" ? "followUp" : "steer",
@@ -852,6 +1114,7 @@ export class PiSdkRuntime implements AgentRuntime {
       this.cancellingRuns.add(activeRun.id);
     }
 
+    this.validationControllers.get(sessionId)?.abort();
     denyPendingQuestionRequestsForSession(sessionId);
     await runtimeSession.session.abort();
   }
@@ -901,6 +1164,7 @@ export class PiSdkRuntime implements AgentRuntime {
 
     this.sessions.delete(sessionId);
     releaseSessionResources(sessionId);
+    this.validationControllers.get(sessionId)?.abort();
     denyPendingQuestionRequestsForSession(sessionId);
     try {
       if (runtimeSession.session.isStreaming) await runtimeSession.session.abort();

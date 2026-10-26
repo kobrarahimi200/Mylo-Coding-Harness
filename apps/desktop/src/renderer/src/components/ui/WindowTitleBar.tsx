@@ -4,7 +4,7 @@ import { cn } from "../../lib/cn";
 export function WindowTitleBar() {
   return (
     <div className="app-drag flex h-10 shrink-0 items-center bg-chrome">
-      <div className="flex-1 pl-5 text-xs text-fg-subtle">Modus</div>
+      <div className="flex-1 pl-5 text-xs text-fg-subtle">Mylo Coding Harness</div>
       <WindowControls />
     </div>
   );

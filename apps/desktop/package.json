@@ -1,23 +1,24 @@
 {
   "name": "@modus/desktop",
   "version": "0.1.0",
-  "description": "Local-first Modus desktop agent window.",
+  "description": "Mylo Coding Harness desktop coding agent.",
   "author": "Modus contributors",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev --watch",
     "build": "npm run build:pty && electron-vite build",
     "build:pty": "cargo build --release -p modus-pty-host",
     "preview": "electron-vite preview",
     "package": "electron-builder --config electron-builder.config.ts",
     "package:mac": "electron-builder --mac --config electron-builder.config.ts",
-    "package:win": "electron-builder --win --config electron-builder.config.ts",
+    "package:win": "node scripts/check-windows-package.mjs && electron-builder --win --config electron-builder.config.ts",
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --root ../.. apps/desktop/src"
+    "test": "vitest run --root ../.. apps/desktop/src",
+    "test:smoke": "node scripts/smoke-runner.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",

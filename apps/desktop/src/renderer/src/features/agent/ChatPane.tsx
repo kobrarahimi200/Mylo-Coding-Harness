@@ -30,7 +30,9 @@ import {
   optimisticUserPromptEvents,
 } from "./agentEventHub";
 import { ConversationTimeline } from "./ConversationTimeline";
+import { failedTaskRecovery } from "./failedTaskRecovery";
 import { latestSessionStatus } from "./runState";
+import { TaskRecoveryNotice } from "./TaskRecoveryNotice";
 import { buildVisibleTimelineBlocks, Timeline } from "./Timeline";
 import { useAutoScroll } from "./useAutoScroll";
 
@@ -49,6 +51,7 @@ type ChatPaneProps = {
   initialEvents?: AgentEventItem[] | undefined;
   onInitialEventsConsumed?(sessionId: string): void;
   onSessionsChanged(): void;
+  onOpenSettings(): void;
   onModelChange(model: string): void;
   onModelConfigChange(model: string, thinkingVariant: string): Promise<void> | void;
 
@@ -70,6 +73,7 @@ export function ChatPane({
   initialEvents,
   onInitialEventsConsumed,
   onSessionsChanged,
+  onOpenSettings,
   onModelChange,
   onModelConfigChange,
   composerReplacement,
@@ -231,6 +235,7 @@ export function ChatPane({
   /* ── Conversation actions ──────────────────────────────────────────── */
 
   const paneModel = session.model ?? defaultModel;
+  const recovery = useMemo(() => failedTaskRecovery(agentEvents), [agentEvents]);
   const activeCwd = session.cwd;
 
   function submitPrompt(
@@ -336,6 +341,24 @@ export function ChatPane({
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col">
+      {recovery && !isRunning ? (
+        <TaskRecoveryNotice
+          sessionId={sessionId}
+          model={paneModel}
+          error={recovery.error}
+          busy={isRunning}
+          onSettings={onOpenSettings}
+          onRetry={() =>
+            submitPrompt(
+              recovery.message,
+              recovery.context,
+              "normal",
+              recovery.attachments,
+              recovery.skills,
+            )
+          }
+        />
+      ) : null}
       {promptError ? (
         <div className="mx-4 mt-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
           {promptError}

@@ -6,9 +6,15 @@ import { SearchField } from "../../components/ui/SearchField";
 import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
 import { ProviderDetailsDialog } from "./ProviderDetailsDialog";
 
-export function ProviderSettingsPanel({ state }: { state: ModelSettingsState | null }) {
+export function ProviderSettingsPanel({
+  state,
+  sessionId,
+}: {
+  state: ModelSettingsState | null;
+  sessionId?: string | undefined;
+}) {
   const [query, setQuery] = useState("");
-  const [configuredOnly, setConfiguredOnly] = useState(true);
+  const [configuredOnly, setConfiguredOnly] = useState(false);
   const [selected, setSelected] = useState<ModelProviderInfo>();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const providers = (state?.providers ?? []).filter(
@@ -57,7 +63,9 @@ export function ProviderSettingsPanel({ state }: { state: ModelSettingsState | n
             <span className="min-w-0 flex-1 break-words text-sm">
               {provider.name}
               <span className="block text-xs text-fg-faint">
-                {provider.configured ? "Configured" : "Not configured"}
+                {provider.configured
+                  ? "Credentials found · test connection to verify"
+                  : "Not configured"}
               </span>
             </span>
             <span className="text-xs text-fg-muted tabular-nums">
@@ -77,6 +85,7 @@ export function ProviderSettingsPanel({ state }: { state: ModelSettingsState | n
       {selected ? (
         <ProviderDetailsDialog
           provider={selected}
+          sessionId={sessionId}
           onClose={() => setSelected(undefined)}
           finalFocus={triggerRef}
         />

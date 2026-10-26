@@ -1,6 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { useState } from "react";
 import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
+import { CodeDiff } from "../../components/code/CodeDiff";
 import { Button } from "../../components/ui/Button";
 import { DialogBody, DialogSurface } from "../../components/ui/DialogSurface";
 
@@ -61,6 +62,12 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
               {question.detail}
             </Dialog.Description>
           ) : null}
+          {question.codeChanges?.map((change) => (
+            <section key={change.path} className="mt-4">
+              <h3 className="mb-2 text-xs">{change.path}</h3>
+              <CodeDiff before={change.before} after={change.after} />
+            </section>
+          ))}
           {question.options.length > 0 ? (
             <div className="mt-4 grid gap-2">
               {question.options.map((option) => (
@@ -83,13 +90,23 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
                 void respond();
               }}
             >
-              <textarea
-                aria-label={question.header}
-                value={value}
-                onChange={(event) => setValue(event.target.value)}
-                disabled={busy}
-                className="min-h-24 rounded-md border border-hairline bg-surface p-3 text-sm text-fg outline-focus-ring"
-              />
+              {question.plan ? (
+                <PlanEditor plan={question.plan} onChange={setValue} />
+              ) : question.codeChange ? (
+                <CodeDiff
+                  before={question.codeChange.before}
+                  after={question.codeChange.after}
+                  onChange={setValue}
+                />
+              ) : (
+                <textarea
+                  aria-label={question.header}
+                  value={value}
+                  onChange={(event) => setValue(event.target.value)}
+                  disabled={busy}
+                  className="min-h-24 rounded-md border border-hairline bg-surface p-3 text-sm text-fg outline-focus-ring"
+                />
+              )}
               <Button type="submit" disabled={busy} variant="primary">
                 Continue
               </Button>
@@ -107,5 +124,42 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
         </footer>
       </DialogSurface>
     </Dialog.Root>
+  );
+}
+
+function PlanEditor({
+  plan,
+  onChange,
+}: {
+  plan: import("../../../../shared/harness").TaskPlan;
+  onChange(text: string): void;
+}) {
+  const [goal, setGoal] = useState(plan.goal);
+  const [steps, setSteps] = useState(plan.steps.join("\n"));
+  return (
+    <div className="grid gap-4">
+      <label className="grid gap-2 text-xs">
+        Goal
+        <input
+          className="rounded border border-hairline bg-canvas p-2"
+          value={goal}
+          onChange={(event) => {
+            setGoal(event.target.value);
+            onChange(JSON.stringify({ goal: event.target.value, steps: steps.split("\n") }));
+          }}
+        />
+      </label>
+      <label className="grid gap-2 text-xs">
+        Execution steps (one per line)
+        <textarea
+          className="min-h-48 rounded border border-hairline bg-canvas p-2 text-sm"
+          value={steps}
+          onChange={(event) => {
+            setSteps(event.target.value);
+            onChange(JSON.stringify({ goal, steps: event.target.value.split("\n") }));
+          }}
+        />
+      </label>
+    </div>
   );
 }

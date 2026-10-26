@@ -86,3 +86,22 @@ it("rejects unavailable explicit choices without selecting a substitute", async 
   await expect(service.setDefaultModel("fixture/absent")).rejects.toThrow("not available");
   expect(service.getDefaultModelId()).toBe("fixture/new-model-999");
 });
+
+it("advertises Pi's real ChatGPT sign-in method", () => {
+  expect(service.getProviderDetail("openai")?.authMethods).toContainEqual({
+    type: "oauth",
+    label: "Sign in with ChatGPT",
+  });
+});
+it("reports the actual provider failure from a connection test", async () => {
+  const runtime = await service.getModelRuntime();
+  const { fauxAssistantMessage } = await import("@earendil-works/pi-ai");
+  const response = fauxAssistantMessage("");
+  response.stopReason = "error";
+  response.errorMessage = "No credits remaining";
+  vi.spyOn(runtime, "completeSimple").mockResolvedValue(response);
+  await expect(service.testModelConnection("fixture/new-model-999")).resolves.toEqual({
+    ok: false,
+    message: "No credits remaining",
+  });
+});

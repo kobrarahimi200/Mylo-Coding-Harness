@@ -283,6 +283,7 @@ export function Composer({
   }
 
   function handlePaste(event: ClipboardEvent<HTMLDivElement>): void {
+    if (!cwd) return;
     const files = [...event.clipboardData.items]
       .filter((item) => item.kind === "file")
       .map((item) => item.getAsFile())
@@ -294,6 +295,10 @@ export function Composer({
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    if (!cwd) {
+      event.preventDefault();
+      return;
+    }
     setDragging(false);
     if (event.dataTransfer.files.length > 0) {
       event.preventDefault();
@@ -504,7 +509,11 @@ export function Composer({
         {/* @container: controls collapse their labels to icons as the composer
           narrows (responsive to the composer's own width, not the viewport). */}
         <div className="@container flex items-center gap-2 px-3 pt-1.5 pb-2.5">
-          <ToolbarButton label="Attach files" onClick={() => fileInputRef.current?.click()}>
+          <ToolbarButton
+            label="Attach files"
+            disabled={!cwd}
+            onClick={() => fileInputRef.current?.click()}
+          >
             <IconPlus size={17} stroke={1.8} />
           </ToolbarButton>
           <input

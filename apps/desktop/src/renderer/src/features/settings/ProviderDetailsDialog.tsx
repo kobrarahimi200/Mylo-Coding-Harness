@@ -8,13 +8,16 @@ import { Button } from "../../components/ui/Button";
 import { DialogBody, DialogSurface } from "../../components/ui/DialogSurface";
 import { SearchField } from "../../components/ui/SearchField";
 import { ToolbarButton } from "../../components/ui/ToolbarButton";
+import { ProviderConnection } from "./ProviderConnection";
 
 export function ProviderDetailsDialog({
   provider,
   onClose,
   finalFocus,
+  sessionId,
 }: {
   provider: ModelProviderInfo;
+  sessionId?: string | undefined;
   onClose(): void;
   finalFocus: RefObject<HTMLButtonElement | null>;
 }) {
@@ -24,6 +27,31 @@ export function ProviderDetailsDialog({
   const [revision, setRevision] = useState(0);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(true);
+  const [testing, setTesting] = useState<string>();
+  const [connectionResult, setConnectionResult] = useState<{ ok: boolean; message: string }>();
+  async function selectModel(model: string) {
+    try {
+      if (sessionId) await window.modus.agent.setModel({ sessionId, model });
+      await window.modus.model.setDefault(model);
+      setConnectionResult({
+        ok: true,
+        message: `Selected ${model}. Return to Chat and retry your task.`,
+      });
+    } catch (cause) {
+      setError(String(cause));
+    }
+  }
+  async function testModel(model: string) {
+    setTesting(model);
+    setConnectionResult(undefined);
+    try {
+      setConnectionResult(await window.modus.model.testConnection(model));
+    } catch (cause) {
+      setConnectionResult({ ok: false, message: String(cause) });
+    } finally {
+      setTesting(undefined);
+    }
+  }
   // biome-ignore lint/correctness/useExhaustiveDependencies: Explicit retry invalidates the request.
   useEffect(() => {
     let active = true;
@@ -72,7 +100,7 @@ export function ProviderDetailsDialog({
               {provider.name}
             </Dialog.Title>
             <Dialog.Description className="rounded-full bg-chip px-2 py-1 text-xs text-fg-muted">
-              {provider.configured ? "Configured" : "Not configured"}
+              {detail?.configured ? "Credentials found" : "Not configured"}
             </Dialog.Description>
           </div>
           <Dialog.Close render={<ToolbarButton label="Close provider details" />}>
@@ -97,6 +125,21 @@ export function ProviderDetailsDialog({
             <IconFolder size={16} />
           </ToolbarButton>
         </div>
+        {detail?.authMethods?.length ? (
+          <ProviderConnection
+            provider={provider.id}
+            methods={detail.authMethods}
+            onConnected={() => setRevision((value) => value + 1)}
+          />
+        ) : null}
+        {connectionResult ? (
+          <p
+            role="status"
+            className={`mx-5 mb-3 break-words text-xs ${connectionResult.ok ? "text-fg" : "text-danger"}`}
+          >
+            {connectionResult.message}
+          </p>
+        ) : null}
         <div className="shrink-0 space-y-2 border-t border-hairline-soft px-5 py-3">
           <SearchField
             ariaLabel="Search models"
@@ -148,6 +191,20 @@ export function ProviderDetailsDialog({
                     <div className="text-xs text-fg-muted tabular-nums">
                       <p>{model.contextWindow?.toLocaleString() ?? "Unknown"} context</p>
                       <p>{model.maxTokens?.toLocaleString() ?? "Unknown"} output</p>
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-2">
+                      <Button
+                        disabled={!model.available || Boolean(testing)}
+                        onClick={() => void testModel(model.id)}
+                      >
+                        {testing === model.id ? "Testing…" : "Test connection"}
+                      </Button>
+                      <Button
+                        disabled={!model.available || Boolean(testing)}
+                        onClick={() => void selectModel(model.id)}
+                      >
+                        Use model
+                      </Button>
                     </div>
                     <span className="hidden w-20 text-right text-xs text-fg-faint sm:block">
                       {model.available ? "Available" : "Unavailable"}

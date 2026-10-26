@@ -60,6 +60,7 @@ type SidebarProps = {
   /** Upper bound from App so the panel can't crush the main column's min width. */
   maxWidth: number;
   onOpenWorkspace(): void;
+  onEditProject(workspace: WorkspaceInfo): void;
   onSelectSession(session: AgentSessionInfo): void;
   onNewSession(): void;
   onNewWorkspaceSession(workspace: WorkspaceInfo): void;
@@ -84,6 +85,7 @@ export function Sidebar({
   width,
   maxWidth,
   onOpenWorkspace,
+  onEditProject,
   onSelectSession,
   onNewSession,
   onNewWorkspaceSession,
@@ -181,7 +183,7 @@ export function Sidebar({
         transition={{ layout: SIDEBAR_TRANSITION }}
       >
         <div className="flex h-12 shrink-0 items-center justify-between px-4">
-          <span className="text-lg font-semibold">Modus</span>
+          <span className="text-lg font-semibold">Mylo</span>
           <div className="flex items-center gap-1">
             <ToolbarButton
               label="Search chats"
@@ -237,7 +239,7 @@ export function Sidebar({
                 className="text-fg-faint"
                 onClick={onOpenWorkspace}
               >
-                Open a repository…
+                Import a project folder…
               </NavItem>
             ) : (
               workspaces.map((workspace) => (
@@ -251,6 +253,7 @@ export function Sidebar({
                     })
                   }
                   onNewSession={() => onNewWorkspaceSession(workspace)}
+                  onEdit={() => onEditProject(workspace)}
                   onPinSession={onPinSession}
                   onSelectSession={onSelectSession}
                   activeSessionId={activeSessionId}
@@ -278,17 +281,16 @@ export function Sidebar({
                 />
               ))
             )}
-
-            <div className="mt-1">
-              <NavItem
-                icon={<IconFolderPlus size={SB_ICON} stroke={SB_STROKE} />}
-                className="text-fg-faint"
-                onClick={onOpenWorkspace}
-              >
-                Open workspace
-              </NavItem>
-            </div>
           </CollapsibleMotion>
+          <div className="mt-1">
+            <NavItem
+              icon={<IconFolderPlus size={SB_ICON} stroke={SB_STROKE} />}
+              className="text-fg-faint"
+              onClick={onOpenWorkspace}
+            >
+              Import project
+            </NavItem>
+          </div>
         </div>
       </m.div>
       {deletion ? (
@@ -324,6 +326,7 @@ function WorkspaceItem({
   onPinSession,
   onDeleteSession,
   renaming,
+  onEdit,
   onStartRename,
   onCommitRename,
   onCancelRename,
@@ -341,6 +344,7 @@ function WorkspaceItem({
   onPinSession(session: AgentSessionInfo, pinned: boolean): void;
   onDeleteSession(session: AgentSessionInfo): void;
   renaming: boolean;
+  onEdit(): void;
   onStartRename(): void;
   onCommitRename(name: string): void;
   onCancelRename(): void;
@@ -373,12 +377,14 @@ function WorkspaceItem({
         pinned={workspace.pinned}
         renaming={renaming}
         onClick={() => {
+          onNewSession();
           setExpanded((value) => !value);
         }}
         onCreate={(event) => {
           event.stopPropagation();
           onNewSession();
         }}
+        onEdit={onEdit}
         onStartRename={onStartRename}
         onCommitRename={onCommitRename}
         onCancelRename={onCancelRename}
@@ -490,6 +496,7 @@ function ProjectRow({
   renaming,
   onClick,
   onCreate,
+  onEdit,
   onStartRename,
   onCommitRename,
   onCancelRename,
@@ -505,6 +512,7 @@ function ProjectRow({
   renaming: boolean;
   onClick(): void;
   onCreate(event: MouseEvent<HTMLButtonElement>): void;
+  onEdit(): void;
   onStartRename(): void;
   onCommitRename(name: string): void;
   onCancelRename(): void;
@@ -533,6 +541,7 @@ function ProjectRow({
       onDeleteChats={onDeleteChats}
       onPin={onPin}
       onRemove={onRemove}
+      onEdit={onEdit}
       onRename={onStartRename}
       onReveal={onReveal}
       pinned={pinned}
@@ -569,7 +578,7 @@ function ProjectRow({
           <span
             className={cn(
               "flex shrink-0 items-center gap-0.5 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100",
-              menuOpen ? "opacity-100" : "opacity-0",
+              "opacity-100",
             )}
           >
             {trigger}
@@ -621,6 +630,8 @@ function RenameInput({
       // biome-ignore lint/a11y/noAutofocus: rename starts a focused edit by design
       autoFocus
       className="min-w-0 flex-1 rounded-md border border-composer-border bg-elevated px-1.5 py-1 text-fg text-sm outline-none focus:border-accent"
+      aria-label="Project name"
+      maxLength={120}
       defaultValue={initialValue}
       onBlur={commit}
       onClick={(event) => event.stopPropagation()}
@@ -650,6 +661,7 @@ function ProjectActions({
   pinned,
   onPin,
   onReveal,
+  onEdit,
   onRename,
   onDeleteChats,
   onRemove,
@@ -658,6 +670,7 @@ function ProjectActions({
   pinned: boolean;
   onPin(): void;
   onReveal(): void;
+  onEdit(): void;
   onRename(): void;
   onDeleteChats(): void;
   onRemove(): void;
@@ -697,7 +710,10 @@ function ProjectActions({
               {pinned ? "Unpin project" : "Pin project"}
             </ProjectMenuItem>
             <ProjectMenuItem icon={<IconFolderOpen size={15} stroke={1.7} />} onClick={onReveal}>
-              Open in Explorer
+              Show project folder
+            </ProjectMenuItem>
+            <ProjectMenuItem icon={<IconEdit size={15} stroke={1.7} />} onClick={onEdit}>
+              Edit project files
             </ProjectMenuItem>
             <ProjectMenuItem icon={<IconPencil size={15} stroke={1.7} />} onClick={onRename}>
               Rename project
@@ -711,7 +727,7 @@ function ProjectActions({
               Delete chats
             </ProjectMenuItem>
             <ProjectMenuItem danger icon={<IconX size={15} stroke={1.7} />} onClick={onRemove}>
-              Remove from recents
+              Remove project
             </ProjectMenuItem>
           </Menu.Popup>
         </Menu.Positioner>

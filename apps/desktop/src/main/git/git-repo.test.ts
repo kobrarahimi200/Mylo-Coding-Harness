@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -15,7 +15,7 @@ async function git(args: string[], cwd = repo): Promise<string> {
 }
 
 beforeEach(async () => {
-  repo = await mkdtemp(join(tmpdir(), "modus-repo-test-"));
+  repo = await realpath(await mkdtemp(join(tmpdir(), "modus-repo-test-")));
   await git(["init"]);
   await git(["config", "user.email", "test@example.com"]);
   await git(["config", "user.name", "Modus Test"]);

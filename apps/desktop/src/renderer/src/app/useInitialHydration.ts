@@ -6,16 +6,19 @@ import type {
 } from "../../../shared/contracts";
 import { beginInitialAppHydration, type InitialAppHydration } from "./initial-hydration";
 import { reportRendererStartup } from "./startup-report";
+import { restoreWorkspaceSelection } from "./workspace-selection";
 
 export function useInitialHydration({
   setWorkspaces,
   setActiveWorkspace,
   setAgentSessions,
+  setActiveSessionId,
   applyModelSettings,
 }: {
   setWorkspaces(workspaces: WorkspaceInfo[]): void;
   setActiveWorkspace(workspace: WorkspaceInfo | null): void;
   setAgentSessions(sessions: AgentSessionInfo[]): void;
+  setActiveSessionId(id: string | undefined): void;
   applyModelSettings(settings: ModelSettingsState): void;
 }) {
   const initialHydrationRef = useRef<InitialAppHydration | null>(null);
@@ -35,11 +38,22 @@ export function useInitialHydration({
           if (active) console.error(`Unable to load initial ${resource}.`, error);
         });
     };
-    load("workspaces", hydration.workspaces, (items) => {
-      setWorkspaces(items);
-      setActiveWorkspace(items[0] ?? null);
-    });
-    load("sessions", hydration.sessions, setAgentSessions);
+    load(
+      "workspace and session state",
+      Promise.all([hydration.workspaces, hydration.sessions]),
+      ([items, sessions]) => {
+        setWorkspaces(items);
+        setAgentSessions(sessions);
+        const restored = restoreWorkspaceSelection(
+          items,
+          sessions,
+          localStorage.getItem("mylo.workspace"),
+          localStorage.getItem("mylo.session"),
+        );
+        setActiveWorkspace(restored.workspace);
+        setActiveSessionId(restored.sessionId);
+      },
+    );
     load("model settings", hydration.modelSettings, applyModelSettings);
     void hydration.settled.then(() => {
       if (active) reportRendererStartup("renderer.initial-hydration-settled");
@@ -47,5 +61,5 @@ export function useInitialHydration({
     return () => {
       active = false;
     };
-  }, [setWorkspaces, setActiveWorkspace, setAgentSessions, applyModelSettings]);
+  }, [setWorkspaces, setActiveWorkspace, setAgentSessions, setActiveSessionId, applyModelSettings]);
 }

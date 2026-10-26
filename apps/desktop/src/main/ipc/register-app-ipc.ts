@@ -1,3 +1,4 @@
+import { realpathSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
@@ -11,6 +12,7 @@ import {
   nativeImage,
   shell,
 } from "electron";
+import { z } from "zod";
 import { listAgentEvents } from "../agent/agent-history";
 import { listAgentRuns } from "../agent/agent-run-store";
 import {
@@ -26,7 +28,14 @@ import {
   revealProviderConfig,
   setDefaultModel,
   setModelThinking,
+  testModelConnection,
 } from "../agent/model-service";
+import {
+  answerProviderLogin,
+  cancelProviderLogin,
+  loginProvider,
+  openProviderLoginUrl,
+} from "../agent/provider-login";
 import { getAgentRuntime } from "../agent/runtime-registry";
 import { removeAgentSession } from "../agent/session-lifecycle";
 import { onSessionResourcesChanged, sessionResources } from "../agent/session-resources";
@@ -65,7 +74,14 @@ import {
   revealMcpConfig,
   runMcpCommand,
 } from "../mcp/mcp-service";
-import { listSkills, revealSkill } from "../skills/skills-service";
+import {
+  addSkillFolder,
+  listSkills,
+  removeSkillFolder,
+  revealSkill,
+  setSkillEnabled,
+  skillFolders,
+} from "../skills/skills-service";
 import type { StartupTimeline } from "../startup/startup-timeline";
 import {
   createTerminal,
@@ -84,6 +100,7 @@ import {
   revealProject,
   setProjectPinned,
 } from "../workspace/workspace-service";
+import { getWorkspace } from "../workspace/workspace-store";
 import { IPC_CHANNELS } from "./channels";
 import {
   agentCreateSchema,
@@ -173,6 +190,41 @@ export function registerAppIpc({
 }: {
   startupTimeline?: StartupTimeline;
 } = {}): void {
+  ipcMain.handle("model:login", async (event, input) => {
+    assertTrustedSender(event);
+    getAgentRuntime().assertIdle();
+    const parsed = z
+      .object({ provider: z.string().min(1), type: z.enum(["api_key", "oauth"]) })
+      .parse(input);
+    const state = await loginProvider(getSenderWindow(event), parsed.provider, parsed.type);
+    event.sender.send("model:catalog-changed");
+    return state;
+  });
+  ipcMain.handle("model:answer-login", (event, input) => {
+    assertTrustedSender(event);
+    const parsed = z
+      .object({ promptId: z.string().uuid(), value: z.string().min(1).max(64000) })
+      .parse(input);
+    answerProviderLogin(event.sender.id, parsed.promptId, parsed.value);
+  });
+  ipcMain.handle("model:cancel-login", (event) => {
+    assertTrustedSender(event);
+    cancelProviderLogin(event.sender.id);
+  });
+  ipcMain.handle("model:open-login-url", (event, input) => {
+    assertTrustedSender(event);
+    return openProviderLoginUrl(event.sender.id, z.string().url().parse(input));
+  });
+  ipcMain.handle("model:test-connection", (event, input) => {
+    assertTrustedSender(event);
+    return testModelConnection(z.string().min(1).parse(input));
+  });
+  ipcMain.handle("skills:set-enabled", async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(resourceLocationSchema, input, "skills:set-enabled");
+    if (typeof input.enabled !== "boolean") throw new Error("enabled must be a boolean");
+    return setSkillEnabled(parsed.sessionId, parsed.path, input.enabled);
+  });
   ipcMain.handle(IPC_CHANNELS.appVersion, (event) => {
     assertTrustedSender(event);
     return app.getVersion();
@@ -245,10 +297,18 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.agentCreate, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(agentCreateSchema, input, IPC_CHANNELS.agentCreate);
+    const workspace = getWorkspace(parsed.workspaceId);
+    if (
+      !workspace ||
+      realpathSync(workspace.rootPath) !== realpathSync(parsed.cwd) ||
+      !statSync(workspace.rootPath).isDirectory()
+    )
+      throw new Error("Select a valid imported project before creating a session.");
     return await getAgentRuntime().create(getSenderWindow(event), {
       workspaceId: parsed.workspaceId,
       cwd: parsed.cwd,
       title: parsed.title,
+      ...(parsed.model ? { model: parsed.model } : {}),
     });
   });
 
@@ -703,6 +763,22 @@ export function registerAppIpc({
     await revealMcpConfig(parsed.sessionId, parsed.path);
   });
 
+  ipcMain.handle("skills:folders", (event, sessionId: string) => {
+    assertTrustedSender(event);
+    return skillFolders(parseIpcInput(sessionIdSchema, sessionId, "skills:folders"));
+  });
+  ipcMain.handle("skills:add-folder", async (event, sessionId: string) => {
+    assertTrustedSender(event);
+    getAgentRuntime().assertIdle();
+    return addSkillFolder(parseIpcInput(sessionIdSchema, sessionId, "skills:add-folder"));
+  });
+  ipcMain.handle("skills:remove-folder", async (event, input) => {
+    assertTrustedSender(event);
+    getAgentRuntime().assertIdle();
+    const parsed = parseIpcInput(resourceLocationSchema, input, "skills:remove-folder");
+    return removeSkillFolder(parsed.sessionId, parsed.path);
+  });
+
   ipcMain.handle(IPC_CHANNELS.skillsList, async (event, sessionId: string) => {
     assertTrustedSender(event);
     const id = parseIpcInput(sessionIdSchema, sessionId, IPC_CHANNELS.skillsList);
@@ -721,9 +797,11 @@ export function registerAppIpc({
     return listModels();
   });
 
-  ipcMain.handle(IPC_CHANNELS.modelSetDefault, (event, model: string) => {
+  ipcMain.handle(IPC_CHANNELS.modelSetDefault, async (event, model: string) => {
     assertTrustedSender(event);
-    return setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
+    await setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
+    for (const window of BrowserWindow.getAllWindows())
+      if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.modelCatalogChanged);
   });
 
   ipcMain.handle(IPC_CHANNELS.modelSettings, (event) => {

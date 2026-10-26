@@ -131,6 +131,19 @@ const api: ModusApi = {
     respond: (input) => ipcRenderer.invoke("questions:respond", input),
   },
   model: {
+    login: (input) => ipcRenderer.invoke("model:login", input),
+    answerLogin: (input) => ipcRenderer.invoke("model:answer-login", input),
+    cancelLogin: () => ipcRenderer.invoke("model:cancel-login"),
+    openLoginUrl: (url) => ipcRenderer.invoke("model:open-login-url", url),
+    testConnection: (model) => ipcRenderer.invoke("model:test-connection", model),
+    onAuthEvent: (callback) => {
+      const listener = (
+        _event: IpcRendererEvent,
+        payload: import("../shared/provider-auth").ProviderAuthEvent,
+      ) => callback(payload);
+      ipcRenderer.on("model:auth-event", listener);
+      return () => ipcRenderer.removeListener("model:auth-event", listener);
+    },
     list: () => ipcRenderer.invoke("model:list"),
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
     settings: () => ipcRenderer.invoke("model:settings"),
@@ -151,6 +164,10 @@ const api: ModusApi = {
     openConfig: (cwd) => ipcRenderer.invoke("mcp:open-config", cwd),
   },
   skills: {
+    setEnabled: (input) => ipcRenderer.invoke("skills:set-enabled", input),
+    folders: (id) => ipcRenderer.invoke("skills:folders", id),
+    addFolder: (id) => ipcRenderer.invoke("skills:add-folder", id),
+    removeFolder: (input) => ipcRenderer.invoke("skills:remove-folder", input),
     list: (sessionId) => ipcRenderer.invoke("skills:list", sessionId),
     onChanged: (callback) => {
       const listener = (_event: IpcRendererEvent, cwd: string) => callback(cwd);

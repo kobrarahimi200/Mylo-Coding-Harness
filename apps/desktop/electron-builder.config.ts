@@ -1,8 +1,8 @@
 import type { Configuration } from "electron-builder";
 
 const config: Configuration = {
-  appId: "dev.modus.desktop",
-  productName: "Modus",
+  appId: "dev.mylo.desktop",
+  productName: "Mylo Coding Harness",
   electronVersion: "42.3.0",
   npmRebuild: false,
   nodeGypRebuild: false,
@@ -18,24 +18,31 @@ const config: Configuration = {
       from: "resources/icon.png",
       to: "icon.png",
     },
-    {
-      from: "../../target/release/modus-pty-host.exe",
-      to: "bin/modus-pty-host.exe",
-    },
   ],
   asar: true,
   icon: "resources/icon.png",
   mac: {
+    extraResources: [{ from: "../../target/release/modus-pty-host", to: "bin/modus-pty-host" }],
     category: "public.app-category.developer-tools",
     icon: "resources/icon.icns",
     target: ["dmg", "zip"],
   },
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: Electron Builder expands these macros.
+    artifactName: "Mylo-Coding-Harness-${version}-${arch}-Setup.${ext}",
+  },
   win: {
+    extraResources: [
+      { from: "../../target/release/modus-pty-host.exe", to: "bin/modus-pty-host.exe" },
+    ],
     icon: "resources/icon.ico",
     target: ["nsis"],
     signAndEditExecutable: false,
   },
   linux: {
+    extraResources: [{ from: "../../target/release/modus-pty-host", to: "bin/modus-pty-host" }],
     category: "Development",
     icon: "resources/icon.png",
     target: ["AppImage", "deb"],

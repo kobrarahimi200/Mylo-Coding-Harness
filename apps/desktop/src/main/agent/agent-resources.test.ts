@@ -14,6 +14,9 @@ import {
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
 const paths = vi.hoisted(() => ({ agent: "" }));
+vi.mock("../preferences/desktop-preferences", () => ({
+  desktopPreferences: () => ({ disabledSkillPaths: [] }),
+}));
 vi.mock("./agent-paths", () => ({ getPiCliAgentDir: () => paths.agent }));
 vi.mock("electron", () => ({ shell: { openExternal: vi.fn(), openPath: vi.fn() } }));
 

@@ -79,7 +79,9 @@ export function SettingsPanel({
       <main className="scroll-thin min-w-0 flex-1 overflow-y-auto bg-canvas">
         <div className="settings-content">
           {activeSection === "appearance" ? <AppearanceSettingsPanel /> : null}
-          {activeSection === "model-provider" ? <ProviderSettingsPanel state={state} /> : null}
+          {activeSection === "model-provider" ? (
+            <ProviderSettingsPanel state={state} sessionId={sessionId} />
+          ) : null}
           {activeSection === "skills" ? (
             <SkillsSettingsPanel cwd={workspaceCwd} sessionId={sessionId} />
           ) : null}

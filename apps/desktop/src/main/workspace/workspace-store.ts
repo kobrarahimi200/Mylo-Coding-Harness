@@ -8,7 +8,9 @@ import { desktopPreferences, saveDesktopPreferences } from "../preferences/deskt
 const sessionWorkspaces = new Map<string, WorkspaceInfo>();
 
 export async function syncSessionWorkspaces(entries: SessionInfo[]): Promise<void> {
-  const existingByRoot = new Map(listWorkspaces().map((item) => [resolve(item.rootPath), item]));
+  const existingByRoot = new Map(
+    listWorkspaces(true).map((item) => [resolve(item.rootPath), item]),
+  );
   const modified = new Map<string, Date>();
   for (const entry of entries) {
     const root = resolve(entry.cwd);
@@ -31,7 +33,7 @@ export async function syncSessionWorkspaces(entries: SessionInfo[]): Promise<voi
   for (const workspace of discovered) sessionWorkspaces.set(workspace.rootPath, workspace);
 }
 
-export function listWorkspaces(): WorkspaceInfo[] {
+export function listWorkspaces(includeHidden = false): WorkspaceInfo[] {
   const workspaces = new Map<string, WorkspaceInfo & { pinnedAt?: string }>(sessionWorkspaces);
   for (const preference of desktopPreferences().workspaces) {
     const root = resolve(preference.rootPath);
@@ -44,20 +46,26 @@ export function listWorkspaces(): WorkspaceInfo[] {
           : preference.lastOpenedAt,
     });
   }
-  return [...workspaces.values()].sort(
-    (a, b) =>
-      Number(b.pinned) - Number(a.pinned) ||
-      (b.pinnedAt ?? b.lastOpenedAt).localeCompare(a.pinnedAt ?? a.lastOpenedAt),
-  );
+  const hidden = new Set(desktopPreferences().hiddenWorkspaceRoots ?? []);
+  return [...workspaces.values()]
+    .filter((workspace) => includeHidden || !hidden.has(resolve(workspace.rootPath)))
+    .sort(
+      (a, b) =>
+        Number(b.pinned) - Number(a.pinned) ||
+        (b.pinnedAt ?? b.lastOpenedAt).localeCompare(a.pinnedAt ?? a.lastOpenedAt),
+    );
 }
 export function getWorkspace(id: string): WorkspaceInfo | undefined {
-  return listWorkspaces().find((workspace) => workspace.id === id);
+  return listWorkspaces(true).find((workspace) => workspace.id === id);
 }
 export function upsertWorkspace(rootPath: string, isGitRepository: boolean): WorkspaceInfo {
   const preferences = desktopPreferences(),
     existing = preferences.workspaces.find(
       (workspace) => resolve(workspace.rootPath) === resolve(rootPath),
     );
+  preferences.hiddenWorkspaceRoots = (preferences.hiddenWorkspaceRoots ?? []).filter(
+    (root) => root !== resolve(rootPath),
+  );
   if (existing) {
     existing.isGitRepository = isGitRepository;
     existing.lastOpenedAt = new Date().toISOString();
@@ -103,6 +111,11 @@ function workspacePreference(id: string): (WorkspaceInfo & { pinnedAt?: string }
 }
 export function removeWorkspace(id: string): void {
   const preferences = desktopPreferences();
+  const workspace = getWorkspace(id);
+  if (!workspace) return;
+  preferences.hiddenWorkspaceRoots = [
+    ...new Set([...(preferences.hiddenWorkspaceRoots ?? []), resolve(workspace.rootPath)]),
+  ];
   preferences.workspaces = preferences.workspaces.filter((workspace) => workspace.id !== id);
   preferences.browserRecents = preferences.browserRecents.filter(
     (recent) => recent.workspaceId !== id,

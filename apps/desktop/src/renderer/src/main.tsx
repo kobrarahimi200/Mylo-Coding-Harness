@@ -1,6 +1,7 @@
 import { StrictMode, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";
+import { requireDesktopBridge } from "./app/desktop-bridge";
 import { reportRendererStartup } from "./app/startup-report";
 import { initTheme } from "./lib/theme";
 import "./styles/app.css";
@@ -43,9 +44,24 @@ if (import.meta.env.DEV) {
   }, 1500);
 }
 
+let bridgeError: string | undefined;
+try {
+  requireDesktopBridge(window.modus);
+} catch (error) {
+  bridgeError = error instanceof Error ? error.message : String(error);
+  console.error(error);
+}
+
 createRoot(rootElement).render(
   <StrictMode>
     <StartupCommitReporter />
-    <App />
+    {bridgeError ? (
+      <main className="m-auto max-w-xl p-8 text-fg" role="alert">
+        <h1 className="mb-4 text-xl">Mylo desktop connection unavailable</h1>
+        <p>{bridgeError}</p>
+      </main>
+    ) : (
+      <App />
+    )}
   </StrictMode>,
 );

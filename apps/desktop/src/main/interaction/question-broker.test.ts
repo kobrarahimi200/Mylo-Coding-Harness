@@ -77,3 +77,20 @@ describe("question-broker", () => {
     await expect(pending).resolves.toMatchObject({ skipped: true });
   });
 });
+
+it("accepts a synchronous approval response without losing it", async () => {
+  await expect(
+    requestQuestions({
+      sessionId: "immediate",
+      questions: QUESTIONS,
+      emit: (event) => {
+        if (event.type === "question.requested")
+          resolveQuestionRequest(
+            event.request.id,
+            [{ questionId: "q1", selected: ["Side"] }],
+            false,
+          );
+      },
+    }),
+  ).resolves.toMatchObject({ skipped: false, answers: [{ selected: ["Side"], questionId: "q1" }] });
+});

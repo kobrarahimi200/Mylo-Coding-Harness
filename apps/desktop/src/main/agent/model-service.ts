@@ -20,6 +20,7 @@ import { getPiCliAgentDir } from "./agent-paths";
 import { createAgentSettings } from "./agent-settings";
 
 let initialization: Promise<ModelRuntime> | undefined;
+let modelRuntimeSnapshot: ModelRuntime | undefined;
 let registry: ModelRegistry | undefined;
 let refreshErrors: string[] = [];
 
@@ -29,6 +30,7 @@ export function getModelRuntime(): Promise<ModelRuntime> {
       authPath: join(getPiCliAgentDir(), "auth.json"),
       modelsPath: join(getPiCliAgentDir(), "models.json"),
     });
+    modelRuntimeSnapshot = runtime;
     registry = new ModelRegistry(runtime);
     refreshErrors = [];
     return runtime;
@@ -150,6 +152,7 @@ export function getProviderDetail(provider: string): ModelProviderDetail | undef
   return info
     ? {
         ...info,
+        authMethods: providerAuthMethods(provider),
         models: getModelRegistry()
           .getAll()
           .filter((model) => model.provider === provider)
@@ -252,4 +255,42 @@ function providerConfigSource(source: string | undefined): string | undefined {
   if (source === "stored") return join(getPiCliAgentDir(), "auth.json");
   if (source === "models_json_key") return join(getPiCliAgentDir(), "models.json");
   return undefined;
+}
+
+function providerAuthMethods(
+  provider: string,
+): import("../../shared/provider-auth").ProviderAuthMethod[] {
+  // Availability of auth methods is defined by the existing Pi provider itself.
+  // getProviderDetail runs only after runtime initialization.
+  const definition = modelRuntimeSnapshot?.getProvider(provider);
+  const methods: import("../../shared/provider-auth").ProviderAuthMethod[] = [];
+  if (definition?.auth.apiKey?.login) methods.push({ type: "api_key", label: "Connect API key" });
+  if (definition?.auth.oauth)
+    methods.push({
+      type: "oauth",
+      label: definition.auth.oauth.loginLabel ?? `Sign in to ${definition.auth.oauth.name}`,
+    });
+  return methods;
+}
+export async function testModelConnection(
+  reference: string,
+): Promise<import("../../shared/provider-auth").ProviderConnectionResult> {
+  const model = findModel(reference);
+  if (!model) throw new Error("Select an available model before testing the connection.");
+  const runtime = await getModelRuntime();
+  try {
+    const response = await runtime.completeSimple(
+      model,
+      { messages: [{ role: "user", content: "Reply with OK.", timestamp: Date.now() }] },
+      { maxTokens: 16, signal: AbortSignal.timeout(30000) },
+    );
+    if (response.stopReason === "error" || response.stopReason === "aborted")
+      return {
+        ok: false,
+        message: response.errorMessage || "The provider did not complete the connection test.",
+      };
+    return { ok: true, message: `Received a response from ${reference}.` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
 }

@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, InMemoryCredentialStore } from "@earendil-works/pi-ai";
@@ -46,6 +54,7 @@ vi.mock("./model-service", () => ({
   getModelInfo: (id: string) => ({ id }),
 }));
 
+import { resolveQuestionRequest } from "../interaction/question-broker";
 import { listAgentEvents, readAgentHistory } from "./agent-history";
 import {
   bindSessionManager,
@@ -59,8 +68,38 @@ import { sessionResources } from "./session-resources";
 
 const runtime = new PiSdkRuntime();
 const events: AgentEvent[] = [];
+let rejectPlan = false;
+let holdPlan = false;
+let rejectTool = false;
 const window = {
-  webContents: { send: (_channel: string, event: AgentEvent) => events.push(event) },
+  webContents: {
+    send: (_channel: string, event: AgentEvent) => {
+      events.push(event);
+      if (event.type === "question.requested")
+        queueMicrotask(() => {
+          const question = event.request.questions[0];
+          if (!question || (holdPlan && question.id === "approve-plan")) return;
+          resolveQuestionRequest(
+            event.request.id,
+            [
+              {
+                questionId: question.id,
+                selected: question.options[0]
+                  ? [
+                      (rejectPlan && question.id === "approve-plan") ||
+                      (rejectTool && question.id === "tool-approval")
+                        ? "Reject"
+                        : question.options[0].label,
+                    ]
+                  : [],
+                ...(question.prefill !== undefined ? { custom: question.prefill } : {}),
+              },
+            ],
+            false,
+          );
+        });
+    },
+  },
   isDestroyed: () => false,
   isFocused: () => true,
   isMinimized: () => false,
@@ -116,7 +155,19 @@ function workspace() {
   return { id, cwd };
 }
 function answer(text = "Answer") {
-  faux.appendResponses([fauxAssistantMessage(text)]);
+  faux.appendResponses([
+    fauxAssistantMessage(
+      JSON.stringify({
+        goal: "Fixture coding task",
+        steps: [
+          "Inspect input.txt and relevant source",
+          "Implement the requested change",
+          "Run project checks",
+        ],
+      }),
+    ),
+    fauxAssistantMessage(text),
+  ]);
 }
 it("shows the real session and preparing feedback before native initialization finishes", async () => {
   const { id, cwd } = workspace();
@@ -158,7 +209,11 @@ it("passes paths through native prompt handling and keeps GUI metadata outside m
   });
   const manager = SessionManager.open(getAgentSession(session.id)?.piSessionFile as string);
   const user = manager.buildSessionContext().messages.find((message) => message.role === "user");
-  expect(user).toMatchObject({ content: [{ type: "text", text: `${file}\n\nExplain` }] });
+  expect(user?.content).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "text", text: expect.stringContaining(file) }),
+    ]),
+  );
   expect(
     manager
       .getEntries()
@@ -360,6 +415,264 @@ it("reloads native resources, keeps the selected model, and publishes current us
     expect(JSON.stringify(sdk?.state.messages)).toContain("Saved before reload");
   } finally {
     writeFileSync(join(root, "agent", "settings.json"), initial);
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("uses Pi to generate a repository plan, executes an approved file tool, and persists harness state", async () => {
+  const { id, cwd } = workspace();
+  writeFileSync(join(cwd, "input.txt"), "original");
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Real tools" });
+  await runtime.ensure(window, session.id);
+  const sdk = sessionResources().find((item) => item.id === session.id)?.session;
+  if (!sdk) throw new Error("Missing session");
+  sdk.setActiveToolsByName(["read", "write"]);
+  const write = fauxAssistantMessage([
+    {
+      type: "toolCall",
+      id: "write-fixture",
+      name: "write",
+      arguments: { path: "input.txt", content: "approved change" },
+    },
+  ]);
+  write.stopReason = "toolUse";
+  faux.appendResponses([
+    fauxAssistantMessage(
+      JSON.stringify({
+        goal: "Update input.txt",
+        steps: ["Read input.txt", "Write the requested content"],
+      }),
+    ),
+    write,
+    fauxAssistantMessage("Edited input.txt"),
+  ]);
+  await runtime.prompt(window, { sessionId: session.id, message: "Update input.txt" });
+  expect(readFileSync(join(cwd, "input.txt"), "utf8")).toBe("approved change");
+  const relevant = events.filter((event) => event.sessionId === session.id);
+  expect(relevant).toContainEqual(
+    expect.objectContaining({ type: "harness.plan", approved: true }),
+  );
+  expect(relevant).toContainEqual(
+    expect.objectContaining({
+      type: "question.requested",
+      request: expect.objectContaining({
+        questions: expect.arrayContaining([
+          expect.objectContaining({
+            codeChange: expect.objectContaining({ before: "original", after: "approved change" }),
+          }),
+        ]),
+      }),
+    }),
+  );
+  await runtime.dispose(session.id);
+  expect(
+    readAgentHistory(session.id).events.some(({ event }) => event.type === "harness.plan"),
+  ).toBe(true);
+}, 30000);
+
+it("blocks execution when the generated plan is rejected", async () => {
+  const { id, cwd } = workspace();
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Reject plan" });
+  faux.appendResponses([
+    fauxAssistantMessage(JSON.stringify({ goal: "Rejected task", steps: ["Write data"] })),
+  ]);
+  rejectPlan = true;
+  try {
+    await expect(
+      runtime.prompt(window, { sessionId: session.id, message: "Change files" }),
+    ).rejects.toThrow("Task plan rejected");
+    expect(
+      events.some((event) => event.sessionId === session.id && event.type === "tool.started"),
+    ).toBe(false);
+  } finally {
+    rejectPlan = false;
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("runs the bounded correction loop through the same Pi session", async () => {
+  const validation = await import("../harness/validation");
+  const { id, cwd } = workspace();
+  writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "node test.cjs" } }));
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Correct test" });
+  const run = vi.spyOn(validation, "runValidation").mockImplementation(async (command) => ({
+    command,
+    passed: run.mock.calls.length >= 2,
+    exitCode: run.mock.calls.length >= 2 ? 0 : 1,
+    output: run.mock.calls.length >= 2 ? "test passed" : "AssertionError: expected true",
+  }));
+  answer("Initial implementation");
+  faux.appendResponses([fauxAssistantMessage("Corrected the assertion")]);
+  try {
+    await runtime.prompt(window, { sessionId: session.id, message: "Fix failing test" });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "harness.phase",
+        sessionId: session.id,
+        phase: "correcting",
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "harness.validation",
+        sessionId: session.id,
+        status: "passed",
+        exitCode: 0,
+      }),
+    );
+  } finally {
+    run.mockRestore();
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("stops after three corrections when checks keep failing", async () => {
+  const validation = await import("../harness/validation");
+  const { id, cwd } = workspace();
+  writeFileSync(join(cwd, "package.json"), JSON.stringify({ scripts: { test: "node test.cjs" } }));
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Retry limit" });
+  const run = vi.spyOn(validation, "runValidation").mockImplementation(async (command) => ({
+    command,
+    passed: false,
+    exitCode: 1,
+    output: "test still fails",
+  }));
+  answer("Initial change");
+  faux.appendResponses([1, 2, 3].map((attempt) => fauxAssistantMessage(`Correction ${attempt}`)));
+  try {
+    await expect(
+      runtime.prompt(window, { sessionId: session.id, message: "Fix test" }),
+    ).rejects.toThrow("three correction attempts");
+    expect(run).toHaveBeenCalledTimes(4);
+  } finally {
+    run.mockRestore();
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("rejects an unapproved command before its shell can run", async () => {
+  const { id, cwd } = workspace();
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Reject command" });
+  await runtime.ensure(window, session.id);
+  const sdk = sessionResources().find((item) => item.id === session.id)?.session;
+  if (!sdk) throw new Error("Missing session");
+  sdk.setActiveToolsByName(["read", "bash"]);
+  const command = fauxAssistantMessage([
+    {
+      type: "toolCall",
+      id: "blocked-shell",
+      name: "bash",
+      arguments: { command: "touch should-not-exist.txt" },
+    },
+  ]);
+  command.stopReason = "toolUse";
+  faux.appendResponses([
+    fauxAssistantMessage(
+      JSON.stringify({ goal: "Run command", steps: ["Request command approval"] }),
+    ),
+    command,
+    fauxAssistantMessage("Command rejected"),
+  ]);
+  rejectTool = true;
+  try {
+    await runtime
+      .prompt(window, { sessionId: session.id, message: "Run the command" })
+      .catch(() => {});
+    expect(existsSync(join(cwd, "should-not-exist.txt"))).toBe(false);
+    expect(
+      events.some(
+        (event) =>
+          event.sessionId === session.id &&
+          event.type === "question.requested" &&
+          event.request.questions[0]?.id === "tool-approval",
+      ),
+    ).toBe(true);
+  } finally {
+    rejectTool = false;
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("adds a custom Pi skill and persists its enabled state", async () => {
+  const { setSkillEnabled, listSkills } = await import("../skills/skills-service");
+  const { id, cwd } = workspace();
+  const directory = join(cwd, ".pi", "skills", "custom-check");
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, "SKILL.md");
+  writeFileSync(
+    path,
+    "---\nname: custom-check\ndescription: Custom regression skill\n---\nRead the project test instructions before editing.",
+  );
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Custom skill" });
+  await runtime.ensure(window, session.id);
+  try {
+    expect(listSkills(session.id).skills.some((skill) => skill.path === path)).toBe(true);
+    expect(
+      (await setSkillEnabled(session.id, path, false)).skills.some((skill) => skill.path === path),
+    ).toBe(false);
+    expect(desktopPreferences().disabledSkillPaths).toContain(path);
+    expect(
+      (await setSkillEnabled(session.id, path, true)).skills.some((skill) => skill.path === path),
+    ).toBe(true);
+  } finally {
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("cancels a task while it waits for plan approval", async () => {
+  const { id, cwd } = workspace();
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Cancel plan" });
+  faux.setResponses([
+    fauxAssistantMessage(JSON.stringify({ goal: "Wait for approval", steps: ["Change a file"] })),
+  ]);
+  holdPlan = true;
+  try {
+    const pending = runtime.prompt(window, { sessionId: session.id, message: "Change a file" });
+    await vi.waitFor(() =>
+      expect(
+        events.some(
+          (event) =>
+            event.sessionId === session.id &&
+            event.type === "question.requested" &&
+            event.request.questions[0]?.id === "approve-plan",
+        ),
+      ).toBe(true),
+    );
+    await runtime.abort(session.id);
+    await pending;
+    expect(
+      events.some((event) => event.sessionId === session.id && event.type === "run.cancelled"),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.sessionId === session.id && event.type === "tool.started"),
+    ).toBe(false);
+  } finally {
+    holdPlan = false;
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
+it("preserves the actual provider error when planning fails", async () => {
+  const { id, cwd } = workspace();
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Provider failure" });
+  const response = fauxAssistantMessage("");
+  response.stopReason = "error";
+  response.errorMessage = "Provider fixture: no credits remaining";
+  faux.setResponses([response]);
+  try {
+    await expect(
+      runtime.prompt(window, { sessionId: session.id, message: "Plan a change" }),
+    ).rejects.toThrow("Provider fixture: no credits remaining");
+    expect(
+      events.some(
+        (event) =>
+          event.sessionId === session.id &&
+          event.type === "run.failed" &&
+          event.message.includes("no credits remaining"),
+      ),
+    ).toBe(true);
+  } finally {
     await runtime.dispose(session.id);
   }
 }, 30000);

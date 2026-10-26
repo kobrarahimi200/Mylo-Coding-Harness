@@ -41,7 +41,7 @@ export function createMainWindow({
     height,
     minWidth: Math.min(1120, width),
     minHeight: Math.min(720, height),
-    title: "Modus",
+    title: "Mylo Coding Harness",
     icon: appIconPath,
     backgroundColor: "#131314",
     show: true,
@@ -60,6 +60,9 @@ export function createMainWindow({
     },
   });
   startupTimeline.mark("main.window-created");
+  window.webContents.on("preload-error", (_event, path, error) => {
+    console.error("[preload-error]", path, error.stack ?? error.message);
+  });
 
   // 把 maximize/unmaximize 状态推送给 renderer，用于切换 max/restore 按钮图标
   const sendState = (): void => {

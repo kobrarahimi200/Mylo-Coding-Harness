@@ -25,8 +25,9 @@ export type InitialAppHydration = {
 
 /** Starts the independent first-screen reads together without coupling their failures. */
 export function beginInitialAppHydration(api: InitialAppDataSource): InitialAppHydration {
-  const workspaces = api.workspace.list();
   const sessions = api.agent.list();
+  // Native session discovery also discovers workspaces; read recents after it settles.
+  const workspaces = sessions.catch(() => []).then(() => api.workspace.list());
   const modelSettings = api.model.settings();
   const pending = [workspaces, sessions, modelSettings];
 

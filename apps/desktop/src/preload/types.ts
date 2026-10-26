@@ -196,6 +196,16 @@ export type ModusApi = {
     }): Promise<QuestionResponse | null>;
   };
   model: {
+    login(input: { provider: string; type: "api_key" | "oauth" }): Promise<ModelSettingsState>;
+    answerLogin(input: { promptId: string; value: string }): Promise<void>;
+    cancelLogin(): Promise<void>;
+    openLoginUrl(url: string): Promise<void>;
+    onAuthEvent(
+      callback: (event: import("../shared/provider-auth").ProviderAuthEvent) => void,
+    ): () => void;
+    testConnection(
+      model: string,
+    ): Promise<import("../shared/provider-auth").ProviderConnectionResult>;
     list(): Promise<ModelInfo[]>;
     setDefault(model: string): Promise<void>;
     settings(): Promise<ModelSettingsState>;
@@ -212,6 +222,10 @@ export type ModusApi = {
     openConfig(input: { sessionId: string; path: string }): Promise<void>;
   };
   skills: {
+    setEnabled(input: { sessionId: string; path: string; enabled: boolean }): Promise<SkillState>;
+    folders(sessionId: string): Promise<string[]>;
+    addFolder(sessionId: string): Promise<SkillState>;
+    removeFolder(input: { sessionId: string; path: string }): Promise<SkillState>;
     list(sessionId: string): Promise<SkillState>;
     onChanged(callback: (cwd: string) => void): () => void;
     openDir(input: { sessionId: string; path: string }): Promise<void>;

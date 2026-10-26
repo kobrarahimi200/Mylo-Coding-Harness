@@ -18,10 +18,12 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   const refreshVersionRef = useRef(0);
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
+    if (activeSessionId) localStorage.setItem("mylo.session", activeSessionId);
   }, [activeSessionId]);
 
   useEffect(() => {
     activeWorkspaceRef.current = activeWorkspace;
+    if (activeWorkspace) localStorage.setItem("mylo.workspace", activeWorkspace.id);
   }, [activeWorkspace]);
 
   const refreshSessions = useCallback((): Promise<void> => {
@@ -57,10 +59,14 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
     if (!activeSessionId) {
       return;
     }
-    if (!agentSessions.some((session) => session.id === activeSessionId)) {
+    const selected = agentSessions.find((session) => session.id === activeSessionId);
+    const workspace = workspaces.find((item) => item.id === selected?.workspaceId);
+    if (!selected || !workspace) {
       setActiveSessionId(undefined);
+      return;
     }
-  }, [activeSessionId, agentSessions]);
+    setActiveWorkspace(workspace);
+  }, [activeSessionId, agentSessions, workspaces]);
 
   const activeSession = useMemo(
     () => agentSessions.find((session) => session.id === activeSessionId),
@@ -68,13 +74,15 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   );
 
   async function openWorkspace(): Promise<void> {
-    const workspace = await window.modus.workspace.open();
-    if (!workspace) {
-      return;
+    try {
+      const workspace = await window.modus.workspace.open();
+      if (!workspace) return;
+      openNewChat(workspace);
+      setWorkspaces(await window.modus.workspace.list());
+      await refreshSessions();
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
     }
-    setActiveWorkspace(workspace);
-    setWorkspaces(await window.modus.workspace.list());
-    await refreshSessions();
   }
 
   async function createSession(
@@ -117,9 +125,12 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   function selectSession(session: AgentSessionInfo): void {
     setSessionCreateError(undefined);
     setSettingsOpen(false);
-    setActiveWorkspace(
-      workspaces.find((workspace) => workspace.id === session.workspaceId) ?? activeWorkspace,
-    );
+    const workspace = workspaces.find((item) => item.id === session.workspaceId);
+    if (!workspace) {
+      setSessionCreateError("Import this session's project before opening it.");
+      return;
+    }
+    setActiveWorkspace(workspace);
     setAgentSessions((current) => {
       const exists = current.some((item) => item.id === session.id);
       return exists
@@ -130,6 +141,7 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   }
 
   function openNewChat(workspace?: WorkspaceInfo | null): void {
+    localStorage.removeItem("mylo.session");
     if (workspace !== undefined) {
       setActiveWorkspace(workspace);
     }
@@ -163,14 +175,25 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   /* ── Project (workspace) actions — sidebar "..." menu ──────────────────── */
 
   async function pinProject(id: string, pinned: boolean): Promise<void> {
-    setWorkspaces(await window.modus.workspace.pin({ id, pinned }));
+    try {
+      setWorkspaces(await window.modus.workspace.pin({ id, pinned }));
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function renameProject(id: string, displayName: string): Promise<void> {
-    setWorkspaces(await window.modus.workspace.rename({ id, displayName }));
-    setActiveWorkspace((current) =>
-      current && current.id === id ? { ...current, displayName } : current,
-    );
+    try {
+      const updated = await window.modus.workspace.rename({ id, displayName });
+      setWorkspaces(updated);
+      setActiveWorkspace((current) =>
+        current?.id === id
+          ? (updated.find((workspace) => workspace.id === id) ?? current)
+          : current,
+      );
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function deleteProjectChats(id: string): Promise<SessionDeletionResult[]> {
@@ -182,13 +205,19 @@ export function useWorkspaceSessions(setSettingsOpen: (open: boolean) => void) {
   }
 
   async function removeProject(id: string): Promise<void> {
-    const next = await window.modus.workspace.remove(id);
-    setWorkspaces(next);
-    if (activeWorkspaceRef.current?.id === id) {
-      setActiveWorkspace(next[0] ?? null);
-      setActiveSessionId(undefined);
+    try {
+      const next = await window.modus.workspace.remove(id);
+      setWorkspaces(next);
+      if (activeWorkspaceRef.current?.id === id) {
+        localStorage.removeItem("mylo.workspace");
+        localStorage.removeItem("mylo.session");
+        setActiveWorkspace(next[0] ?? null);
+        setActiveSessionId(undefined);
+      }
+      await refreshSessions();
+    } catch (error) {
+      setSessionCreateError(error instanceof Error ? error.message : String(error));
     }
-    await refreshSessions();
   }
 
   async function revealProject(id: string): Promise<void> {

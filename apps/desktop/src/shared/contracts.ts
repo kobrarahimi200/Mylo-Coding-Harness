@@ -82,6 +82,9 @@ export type QuestionPrompt = {
   /** Optional context shown under the header. */
   detail?: string;
   prefill?: string;
+  codeChange?: { path: string; before: string; after: string };
+  codeChanges?: { path: string; before: string; after: string }[];
+  plan?: import("./harness").TaskPlan;
   options: QuestionOption[];
 };
 
@@ -119,6 +122,7 @@ export type SessionRunStatus =
     };
 
 export type AgentEvent =
+  | import("./harness").HarnessEvent
   | { type: "agent.started"; sessionId: string }
   | { type: "turn.started"; sessionId: string }
   | { type: "agent.ended"; sessionId: string }
@@ -445,7 +449,10 @@ export type ModelProviderInfo = {
   error?: string;
 };
 
-export type ModelProviderDetail = ModelProviderInfo & { models: ModelInfo[] };
+export type ModelProviderDetail = ModelProviderInfo & {
+  authMethods?: import("./provider-auth").ProviderAuthMethod[];
+  models: ModelInfo[];
+};
 
 export type ModelSettingsState = {
   errors: string[];
@@ -545,9 +552,11 @@ export type SkillInfo = {
   /** Absolute path of the skill's SKILL.md. */
   path: string;
   allowImplicitInvocation: boolean;
+  enabled?: boolean;
 };
 
 export type SkillState = {
   skills: SkillInfo[];
+  disabledSkills?: SkillInfo[];
   diagnostics: Array<{ type: "warning" | "error" | "collision"; message: string; path?: string }>;
 };

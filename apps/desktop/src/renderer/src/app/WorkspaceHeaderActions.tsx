@@ -17,7 +17,7 @@ export function WorkspaceHeaderActions({
   return (
     <div className="app-no-drag flex h-8 items-center gap-1">
       <Popover.Root>
-        <Popover.Trigger render={<ToolbarButton label="Environment" />}>
+        <Popover.Trigger render={<ToolbarButton label="Environment" disabled={!activeWorkspace} />}>
           <IconListDetails {...TOOLBAR_ICON} />
         </Popover.Trigger>
         <Popover.Portal>
@@ -36,6 +36,7 @@ export function WorkspaceHeaderActions({
         </Popover.Portal>
       </Popover.Root>
       <ToolbarButton
+        disabled={!activeWorkspace}
         active={inspectorOpen}
         label={inspectorOpen ? "Hide right sidebar" : "Show right sidebar"}
         onClick={onToggleInspector}

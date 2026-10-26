@@ -46,8 +46,6 @@ export async function requestQuestions(input: {
     questions: input.questions,
   };
 
-  input.emit({ type: "question.requested", sessionId: input.sessionId, request });
-
   const pending = registry.open({
     id: request.id,
     sessionId: input.sessionId,
@@ -55,6 +53,8 @@ export async function requestQuestions(input: {
     timeoutMs: input.timeoutMs,
     onTimeout: (context) => skip(context),
   });
+  // Register before publishing: a synchronous UI/test response must not be lost.
+  input.emit({ type: "question.requested", sessionId: input.sessionId, request });
 
   const abort = () => {
     resolveQuestionRequest(request.id, [], true);

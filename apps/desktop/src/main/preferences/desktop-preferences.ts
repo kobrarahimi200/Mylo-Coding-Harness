@@ -4,6 +4,8 @@ import { app } from "electron";
 import type { BrowserRecentInfo, WorkspaceInfo } from "../../shared/contracts";
 
 export type DesktopPreferences = {
+  hiddenWorkspaceRoots?: string[];
+  disabledSkillPaths?: string[];
   workspaces: (WorkspaceInfo & { pinnedAt?: string })[];
   sessions: Record<string, { pinnedAt?: string }>;
   browserRecents: BrowserRecentInfo[];
@@ -17,6 +19,9 @@ export function desktopPreferences(): DesktopPreferences {
   cached = existsSync(file)
     ? (JSON.parse(readFileSync(file, "utf8")) as DesktopPreferences)
     : { workspaces: [], sessions: {}, browserRecents: [] };
+  cached.workspaces ??= [];
+  cached.sessions ??= {};
+  cached.browserRecents ??= [];
   const sessions = Object.fromEntries(
     Object.entries(cached.sessions).flatMap(([file, value]) =>
       value.pinnedAt ? [[file, { pinnedAt: value.pinnedAt }]] : [],

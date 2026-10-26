@@ -7,6 +7,7 @@ import {
   type SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { createModusMcpExtension } from "../mcp/mcp-service";
+import { filterEnabledSkills } from "../skills/skill-preferences";
 import { getPiCliAgentDir } from "./agent-paths";
 import { resolveProjectTrust } from "./project-trust";
 
@@ -20,6 +21,7 @@ export async function createAgentResourceLoader(
     cwd,
     agentDir: getPiCliAgentDir(),
     settingsManager,
+    skillsOverride: (base) => ({ ...base, skills: filterEnabledSkills(cwd, base.skills) }),
     extensionFactories: [
       {
         name: "codemode",

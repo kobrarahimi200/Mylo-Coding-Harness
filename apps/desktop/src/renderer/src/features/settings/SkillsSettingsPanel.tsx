@@ -13,6 +13,7 @@ export function SkillsSettingsPanel({
   sessionId: string | undefined;
 }) {
   const [state, setState] = useState<SkillState>({ skills: [], diagnostics: [] });
+  const [folders, setFolders] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(Boolean(sessionId));
@@ -23,6 +24,12 @@ export function SkillsSettingsPanel({
     setError(undefined);
     if (!sessionId) return;
     const load = () => {
+      void window.modus.skills
+        .folders(sessionId)
+        .then((paths) => {
+          if (active) setFolders(paths);
+        })
+        .catch((cause: unknown) => setError(String(cause)));
       const current = ++request;
       setLoading(true);
       void window.modus.skills
@@ -49,12 +56,52 @@ export function SkillsSettingsPanel({
       unsubscribe();
     };
   }, [cwd, sessionId]);
-  const filtered = state.skills.filter((skill) =>
+  const filtered = [...state.skills, ...(state.disabledSkills ?? [])].filter((skill) =>
     `${skill.name} ${skill.description}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
     <section className="min-w-0 space-y-5">
       <SettingsPageHeader title="Skills" />
+      <p className="text-sm text-fg-muted">
+        Add folders containing trusted Pi skills. Skills provide instructions to the agent.
+      </p>
+      <button
+        type="button"
+        disabled={!sessionId || loading}
+        onClick={() => {
+          if (sessionId)
+            void window.modus.skills
+              .addFolder(sessionId)
+              .then(async (next) => {
+                setState(next);
+                setFolders(await window.modus.skills.folders(sessionId));
+              })
+              .catch((cause: unknown) => setError(String(cause)));
+        }}
+      >
+        Add skill folder
+      </button>
+      {folders.map((path) => (
+        <div className="flex gap-3 text-sm" key={path}>
+          <span className="break-all">{path}</span>
+          <button
+            type="button"
+            disabled={!sessionId}
+            onClick={() => {
+              if (sessionId)
+                void window.modus.skills
+                  .removeFolder({ sessionId, path })
+                  .then(async (next) => {
+                    setState(next);
+                    setFolders(await window.modus.skills.folders(sessionId));
+                  })
+                  .catch((cause: unknown) => setError(String(cause)));
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
       <SearchField
         ariaLabel="Search skills"
         onChange={setQuery}
@@ -91,22 +138,36 @@ export function SkillsSettingsPanel({
       ) : null}
       <div className="space-y-1">
         {filtered.map((skill) => (
-          <ResourceRow
-            action={{
-              icon: <IconFolder aria-hidden size={16} stroke={1.8} />,
-              label: `Open ${skill.name} folder`,
-              onClick: () => {
+          <div key={skill.path} className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              aria-label={`Enable ${skill.name}`}
+              checked={skill.enabled !== false}
+              onChange={(event) => {
                 if (sessionId)
                   void window.modus.skills
-                    .openDir({ sessionId, path: skill.path })
+                    .setEnabled({ sessionId, path: skill.path, enabled: event.target.checked })
+                    .then(setState)
                     .catch((cause: unknown) => setError(String(cause)));
-              },
-            }}
-            description={skill.description}
-            key={skill.path}
-            meta={skill.path}
-            title={skill.name}
-          />
+              }}
+            />
+            <ResourceRow
+              action={{
+                icon: <IconFolder aria-hidden size={16} stroke={1.8} />,
+                label: `Open ${skill.name} folder`,
+                onClick: () => {
+                  if (sessionId)
+                    void window.modus.skills
+                      .openDir({ sessionId, path: skill.path })
+                      .catch((cause: unknown) => setError(String(cause)));
+                },
+              }}
+              description={skill.description}
+              key={skill.path}
+              meta={skill.path}
+              title={skill.name}
+            />
+          </div>
         ))}
       </div>
     </section>

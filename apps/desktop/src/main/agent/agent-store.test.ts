@@ -5,7 +5,12 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { desktopPreferences } from "../preferences/desktop-preferences";
-import { getWorkspace, listWorkspaces, removeWorkspace } from "../workspace/workspace-store";
+import {
+  getWorkspace,
+  listWorkspaces,
+  removeWorkspace,
+  upsertWorkspace,
+} from "../workspace/workspace-store";
 
 let root: string;
 vi.mock("electron", () => ({ app: { getPath: () => root } }));
@@ -119,7 +124,12 @@ it("discovers unregistered PI directories and updates their native titles withou
       "Renamed in CLI",
     );
     removeWorkspace(session.workspaceId);
+    expect(listWorkspaces().some((item) => item.rootPath === cwd)).toBe(false);
+    await discoverAgentSessions();
+    expect(listWorkspaces().some((item) => item.rootPath === cwd)).toBe(false);
+    upsertWorkspace(cwd, false);
     expect(listWorkspaces().some((item) => item.rootPath === cwd)).toBe(true);
+    removeWorkspace(session.workspaceId);
     expect(listAgentSessions().some((item) => item.id === session.id)).toBe(true);
     unlinkSync(external.getSessionFile()!);
     await discoverAgentSessions();
@@ -217,4 +227,22 @@ it("keeps an unfinished native branch visible without inventing a completed run"
     ),
   ).toBe(true);
   expect(history.runs.some((run) => run.userMessageId === user)).toBe(false);
+});
+
+it("restores the actual provider error instead of a legacy generic planning failure", () => {
+  const { id, manager } = fixture();
+  manager.appendMessage({ role: "user", content: "Create the app", timestamp: Date.now() });
+  const response = fauxAssistantMessage("");
+  response.stopReason = "error";
+  response.errorMessage = "Provider rejected request: no credits remaining";
+  manager.appendMessage(response);
+  manager.appendCustomEntry("mylo.harness", {
+    type: "harness.phase",
+    sessionId: id,
+    phase: "failed",
+    detail: "Pi could not generate a task plan.",
+  });
+  expect(
+    readAgentHistory(id).events.findLast(({ event }) => event.type === "harness.phase")?.event,
+  ).toMatchObject({ phase: "failed", detail: "Provider rejected request: no credits remaining" });
 });
