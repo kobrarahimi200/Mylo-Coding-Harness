@@ -29,7 +29,8 @@ export type PromptAgentInput = {
   attachments?: PromptImageAttachment[];
   /** Skills explicitly selected with `/name` in the composer for this prompt. */
   skills?: SkillSelection[];
-
+  /** Ask answers read-only, Plan proposes without editing, Agent executes. Defaults to agent. */
+  mode?: import("../../shared/harness").AgentMode;
   model?: string;
   thinkingLevel?: ThinkingLevel;
   thinkingVariant?: string;

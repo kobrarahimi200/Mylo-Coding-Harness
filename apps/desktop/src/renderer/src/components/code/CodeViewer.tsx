@@ -278,13 +278,17 @@ export function CodeViewer({
   }, [readOnly]);
 
   return (
-    <div className={cn("relative min-h-0", className)}>
+    <section
+      className={cn("relative min-h-0", className)}
+      aria-label={`Code editor ${path}`}
+      aria-busy={!ready}
+    >
       <div className="absolute inset-0" ref={hostRef} />
       {!ready ? (
         <div className="absolute inset-0 flex items-center justify-center text-fg-faint text-xs">
           Loading…
         </div>
       ) : null}
-    </div>
+    </section>
   );
 }

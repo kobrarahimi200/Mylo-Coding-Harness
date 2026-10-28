@@ -28,12 +28,6 @@ export async function findValidationCommands(cwd: string): Promise<ValidationCom
     for (const name of ["test", "lint", "typecheck", "check"]) {
       const script = manifest.scripts?.[name];
       if (typeof script !== "string" || !script.trim()) continue;
-      if (
-        name === "check" &&
-        (commands.some((command) => command.args.includes("lint")) ||
-          commands.some((command) => command.args.includes("typecheck")))
-      )
-        continue;
       const args = ["run", name];
       if (name === "test" && /\bvitest\b/.test(script) && !/\brun\b/.test(script))
         args.push("--", "--run");

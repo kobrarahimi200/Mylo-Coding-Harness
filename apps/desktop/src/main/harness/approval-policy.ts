@@ -7,6 +7,7 @@ import {
   isToolCallEventType,
   type ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import type { AgentEvent, QuestionPrompt } from "../../shared/contracts";
 import { resolveWithin } from "../files/path-within";
 import { requestQuestions } from "../interaction/question-broker";
@@ -21,6 +22,7 @@ type ApprovalContext = {
   getPlan?(): TaskPlan | undefined;
   isPlanning?(): boolean;
   onCodeChanged?(): void;
+  onWillChange?(change: { path: string; after: string }): void;
 };
 
 export type ToolAssessment =
@@ -69,7 +71,7 @@ export function assessToolCall(root: string, event: ToolCallEvent): ToolAssessme
     return {
       allowed: false,
       reason:
-        "This command requires OS-level isolation, but no sandbox backend is configured. It was not run.",
+        "This command is blocked by the harness sensitive-command policy even inside the sandbox. It was not run.",
     };
   }
   if (
@@ -80,7 +82,7 @@ export function assessToolCall(root: string, event: ToolCallEvent): ToolAssessme
   ) {
     return { allowed: false, approvalRequired: true, reason: "Human approval is required." };
   }
-  if (["read", "ls", "find", "grep", "tool_search"].includes(event.toolName))
+  if (["read", "ls", "find", "grep", "tool_search", "mylo_step"].includes(event.toolName))
     return { allowed: true };
   return {
     allowed: false,
@@ -111,25 +113,13 @@ export async function approveToolCall(
       });
       return { block: true, reason: assessment.reason, terminate: true };
     }
-    const decision = await ask(context, event, "Approve this action?", [
-      { label: "Approve once" },
-      { label: "Reject" },
-    ]);
-    if (decision !== "Approve once") {
-      await auditHarnessEvent({
-        type: "approval",
-        sessionId: context.sessionId,
-        toolName: event.toolName,
-        outcome: "rejected",
-      });
-      return { block: true, reason: "The user rejected this action.", terminate: true };
-    }
-
     if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
       if (isToolCallEventType("write", event)) {
         const edited = await askForEditedText(context, event, event.input.content);
         if (edited === undefined)
           return { block: true, reason: "Code change rejected.", terminate: true };
+        const violation = currentPathViolation(context.cwd, event);
+        if (violation) return violation;
         const path = resolveWithin(context.cwd, event.input.path);
         const before = existsSync(path) ? readFileSync(path, "utf8") : "";
         changes.push({
@@ -148,6 +138,8 @@ export async function approveToolCall(
           const edited = await askForEditedText(context, event, edit.newText);
           if (edited === undefined)
             return { block: true, reason: "Code change rejected.", terminate: true };
+          const violation = currentPathViolation(context.cwd, event);
+          if (violation) return violation;
           after = after.replace(edit.oldText, edited);
           edit.newText = edited;
         }
@@ -159,26 +151,32 @@ export async function approveToolCall(
           after,
         });
       }
-      const approveEdited = await ask(context, event, "Approve the edited code change?", [
+    } else {
+      const decision = await ask(context, event, "Approve this command?", [
         { label: "Approve once" },
         { label: "Reject" },
       ]);
-      if (approveEdited !== "Approve once") {
+      if (decision !== "Approve once") {
         await auditHarnessEvent({
           type: "approval",
           sessionId: context.sessionId,
           toolName: event.toolName,
           outcome: "rejected",
         });
-        return {
-          block: true,
-          reason: "The user rejected the edited code change.",
-          terminate: true,
-        };
+        return { block: true, reason: "The user rejected this action.", terminate: true };
       }
     }
   }
 
+  try {
+    for (const change of changes) context.onWillChange?.(change);
+  } catch (error) {
+    return {
+      block: true,
+      terminate: true,
+      reason: `Unable to preserve a file checkpoint: ${String(error)}`,
+    };
+  }
   for (const change of changes) context.emit(change);
   await auditHarnessEvent({
     type: "approval",
@@ -186,7 +184,22 @@ export async function approveToolCall(
     toolName: event.toolName,
     outcome: "approved",
   });
-  return {};
+  return currentPathViolation(context.cwd, event) ?? {};
+}
+
+function currentPathViolation(root: string, event: ToolCallEvent) {
+  // An approval dialog can remain open while another process changes symlinks.
+  // Recheck before reading the approved proposal and again at the tool boundary.
+  try {
+    assertToolPathsWithinWorkspace(root, event);
+    return undefined;
+  } catch (error) {
+    return {
+      block: true,
+      reason: error instanceof Error ? error.message : String(error),
+      terminate: true,
+    };
+  }
 }
 
 function toolDetail(event: ToolCallEvent): string {
@@ -227,7 +240,7 @@ async function askForEditedText(
     questions: [
       {
         id: "edit-proposed-change",
-        header: "Edit the proposed code change",
+        header: "Review and apply the code change",
         detail: `${event.toolName}\n${toolDetail(event)}`,
         prefill: proposed,
         codeChange: {
@@ -257,6 +270,37 @@ export function createHarnessApprovalExtension(context: ApprovalContext): Inline
   return {
     name: "harness-approval",
     factory: (pi) => {
+      pi.registerTool({
+        name: "mylo_step",
+        label: "Report plan step",
+        description:
+          "Report the current approved execution plan step and its actual status. Does not edit files or run commands.",
+        parameters: Type.Object({
+          step: Type.Integer({ minimum: 1 }),
+          status: Type.Union([
+            Type.Literal("running"),
+            Type.Literal("completed"),
+            Type.Literal("failed"),
+          ]),
+          detail: Type.String(),
+        }),
+        execute: async (_id, input) => {
+          const plan = context.getPlan?.();
+          if (!plan || context.isPlanning?.() || input.step > plan.steps.length)
+            throw new Error("A valid approved plan step is required.");
+          context.emit({
+            type: "harness.step",
+            sessionId: context.sessionId,
+            index: input.step - 1,
+            status: input.status,
+            detail: input.detail,
+          });
+          return {
+            content: [{ type: "text", text: `Step ${input.step}: ${input.status}` }],
+            details: {},
+          };
+        },
+      });
       pi.registerTool(
         createBashToolDefinition(context.cwd, {
           operations: sandboxOperations(context.cwd),
@@ -273,7 +317,7 @@ export function createHarnessApprovalExtension(context: ApprovalContext): Inline
         const plan = context.getPlan?.();
         return plan
           ? {
-              systemPrompt: `${event.systemPrompt}\nShell commands use an OS sandbox. On Windows they run in WSL + bubblewrap; use Linux commands there. Use relative workspace paths. Network access is disabled.\n\nHuman-approved task plan:\n${JSON.stringify(plan)}`,
+              systemPrompt: `${event.systemPrompt}\nShell commands use an OS sandbox. On Windows they run in WSL + bubblewrap; use Linux commands there. Use relative workspace paths. Network access is disabled. Use write/edit tools for source edits so they have rollback checkpoints; shell changes are not covered. Report each actual plan step using mylo_step before starting and when it completes or fails.\n\nHuman-approved task plan:\n${JSON.stringify(plan)}`,
             }
           : undefined;
       });

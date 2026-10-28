@@ -1,7 +1,8 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import type { AgentEventItem } from "../../../../shared/agent-events";
 import type { WorkspaceInfo } from "../../../../shared/contracts";
 import { HarnessTests, HarnessTimeline } from "./HarnessPanels";
+import { useStoredNumber } from "./useWorkspacePanels";
 
 const TerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({ default: module.TerminalPanel })),
@@ -21,13 +22,22 @@ export function BottomPanel({
   onRunChecks(): void;
   canRunChecks: boolean;
 }) {
-  const [height, setHeight] = useState(200);
+  const [height, setHeight] = useStoredNumber(
+    "mylo.console.height",
+    240,
+    100,
+    Math.max(150, window.innerHeight * 0.6),
+  );
   return (
     <section className="mylo-bottom-panel" style={{ height }} aria-label="Output panel">
       <button
         aria-label="Resize output panel"
         className="h-1 w-full cursor-row-resize bg-hairline"
         type="button"
+        onKeyDown={(event) => {
+          if (event.key === "ArrowUp") setHeight(height + 16);
+          if (event.key === "ArrowDown") setHeight(height - 16);
+        }}
         onPointerDown={(event) => {
           const start = event.clientY,
             initial = height;
@@ -51,7 +61,7 @@ export function BottomPanel({
             onClick={() => onTabChange(name)}
             className={`text-xs capitalize ${tab === name ? "text-accent" : "text-fg-faint"}`}
           >
-            {name}
+            {name === "logs" ? "Agent Logs" : name}
           </button>
         ))}
         {tab === "tests" ? (

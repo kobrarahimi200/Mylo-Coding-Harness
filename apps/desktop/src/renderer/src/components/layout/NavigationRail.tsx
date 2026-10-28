@@ -1,5 +1,4 @@
 import {
-  IconCalculator,
   IconFiles,
   IconFolder,
   IconHistory,
@@ -13,39 +12,22 @@ import { ToolbarButton } from "../ui/ToolbarButton";
 
 export function NavigationRail({
   settingsOpen,
-  calculatorOpen,
   onHome,
-  onCalculator,
   onSettings,
   hasWorkspace,
   onNavigate,
 }: {
   settingsOpen: boolean;
-  calculatorOpen: boolean;
   hasWorkspace: boolean;
   onNavigate(section: string): void;
   onHome(): void;
-  onCalculator(): void;
   onSettings(): void;
 }) {
   return (
     <nav aria-label="Main navigation" className="navigation-rail">
       <img alt="Mylo" className="my-3 size-7 object-contain" src={modusLogo} />
-      <ToolbarButton
-        active={!settingsOpen && !calculatorOpen}
-        className="rail-button"
-        label="Chats"
-        onClick={onHome}
-      >
+      <ToolbarButton active={!settingsOpen} className="rail-button" label="Chats" onClick={onHome}>
         <IconHome size={21} stroke={1.6} />
-      </ToolbarButton>
-      <ToolbarButton
-        active={calculatorOpen}
-        className="rail-button"
-        label="Calculator"
-        onClick={onCalculator}
-      >
-        <IconCalculator size={21} stroke={1.6} />
       </ToolbarButton>
       {(
         [

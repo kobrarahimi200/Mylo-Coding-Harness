@@ -228,13 +228,17 @@ export const WorkFold = memo(function WorkFold({
   const label =
     run.status === "cancelled"
       ? "Stopped by you"
-      : run.executionStartedAt === undefined
-        ? active
-          ? "Preparing"
-          : "Request processed"
-        : active && run.executionCompletedAt === undefined
-          ? `Working for ${elapsed}`
-          : `Worked for ${elapsed}`;
+      : run.status === "awaiting_review"
+        ? "Awaiting your review"
+        : run.status === "rejected"
+          ? "Rejected by you"
+          : run.executionStartedAt === undefined
+            ? active
+              ? "Preparing"
+              : "Request processed"
+            : active && run.executionCompletedAt === undefined
+              ? `Working for ${elapsed}`
+              : `Worked for ${elapsed}`;
 
   return (
     <div className="min-w-0 text-sm">

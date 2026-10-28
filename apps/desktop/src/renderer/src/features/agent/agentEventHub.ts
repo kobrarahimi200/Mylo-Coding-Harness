@@ -61,7 +61,10 @@ export function reduceActivity(
         failed: true,
       };
     case "run.cancelled":
+    case "run.rejected":
       return { ...activity, running: false, needsInput: false };
+    case "run.awaiting_review":
+      return { running: false, needsInput: false, unread: !watched, failed: false };
     case "question.requested":
       return { ...activity, needsInput: true };
     case "question.resolved":
@@ -80,6 +83,8 @@ export function affectsActivity(event: AgentEvent): boolean {
     case "run.completed":
     case "run.failed":
     case "run.cancelled":
+    case "run.rejected":
+    case "run.awaiting_review":
     case "question.requested":
     case "question.resolved":
       return true;

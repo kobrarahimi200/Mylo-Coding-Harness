@@ -50,6 +50,7 @@ const SB_ICON = 16;
 const SB_STROKE = 1.5;
 
 type SidebarProps = {
+  children?: ReactNode;
   workspaces: WorkspaceInfo[];
   agentSessions: AgentSessionInfo[];
   activeSessionId?: string | undefined;
@@ -77,6 +78,7 @@ type SidebarProps = {
 };
 
 export function Sidebar({
+  children,
   workspaces,
   agentSessions,
   activeSessionId,
@@ -291,6 +293,7 @@ export function Sidebar({
               Import project
             </NavItem>
           </div>
+          {children}
         </div>
       </m.div>
       {deletion ? (

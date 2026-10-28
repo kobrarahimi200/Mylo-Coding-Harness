@@ -17,6 +17,7 @@ import type {
   PromptImageAttachment,
   SkillSelection,
 } from "../../../../shared/contracts";
+import type { AgentMode } from "../../../../shared/harness";
 import { ImageThumb } from "../../components/ui/ImageViewer";
 import { ShineBorder } from "../../components/ui/ShineBorder";
 import { ToolbarButton } from "../../components/ui/ToolbarButton";
@@ -34,6 +35,7 @@ import {
 import { contextItemKey } from "./composerTokens";
 import { MentionEditor, type MentionEditorHandle, type MentionEditorPart } from "./MentionEditor";
 import { ModelSelect } from "./ModelSelect";
+import { ModeSelect } from "./ModeSelect";
 import { SlashMenu } from "./SlashMenu";
 import { type ComposerImageUpdate, useComposerImages } from "./useComposerImages";
 import { type MentionRow, useComposerMentions } from "./useComposerMentions";
@@ -54,6 +56,9 @@ type ComposerProps = {
   stopping?: boolean;
   footer?: ReactNode;
   trailingActions?: ReactNode;
+  /** Explicit task mode shown next to the model picker. Omitted surfaces send in Agent mode. */
+  mode?: AgentMode;
+  onModeChange?(mode: AgentMode): void;
   onModelChange(model: string): void;
   onModelConfigChange?(model: string, thinkingVariant: string): Promise<void> | void;
   onContextChange(items: ContextItem[]): void;
@@ -90,6 +95,8 @@ export function Composer({
   trailingActions,
   isRunning = false,
   stopping = false,
+  mode,
+  onModeChange,
   onAbort,
   onModelChange,
   onModelConfigChange,
@@ -531,6 +538,10 @@ export function Composer({
           />
 
           <div className="flex-1" />
+
+          {!isInlineEdit && mode && onModeChange ? (
+            <ModeSelect disabled={isRunning} mode={mode} onChange={onModeChange} />
+          ) : null}
 
           {!isInlineEdit ? (
             <ModelSelect

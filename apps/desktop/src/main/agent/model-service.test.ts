@@ -43,7 +43,10 @@ beforeAll(async () => {
   );
   await service.getModelRuntime();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 afterAll(() => rmSync(paths.root, { recursive: true, force: true }));
 
 it("admits newly discovered native chat models without database enablement records", () => {
@@ -51,6 +54,7 @@ it("admits newly discovered native chat models without database enablement recor
     expect.arrayContaining([
       expect.objectContaining({
         id: "fixture/new-model-999",
+        available: true,
         contextWindow: 32768,
         maxTokens: 4096,
       }),
@@ -100,8 +104,44 @@ it("reports the actual provider failure from a connection test", async () => {
   response.stopReason = "error";
   response.errorMessage = "No credits remaining";
   vi.spyOn(runtime, "completeSimple").mockResolvedValue(response);
-  await expect(service.testModelConnection("fixture/new-model-999")).resolves.toEqual({
+  await expect(service.testModelConnection("fixture/new-model-999")).resolves.toMatchObject({
     ok: false,
     message: "No credits remaining",
+    category: "quota",
   });
+});
+
+it("filters ChatGPT model choices by the signed-in account catalog", async () => {
+  const runtime = await service.getModelRuntime();
+  vi.spyOn(runtime, "isUsingOAuth").mockReturnValue(true);
+  vi.spyOn(runtime, "getAuth").mockResolvedValue({
+    auth: { apiKey: "fixture-oauth-token" },
+    source: "OAuth",
+  });
+  const request = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify({
+          models: [
+            { slug: "gpt-6.1-sol", display_name: "Account coding model", visibility: "list" },
+            { slug: "gpt-4.1-mini", display_name: "Hidden model", visibility: "hide" },
+          ],
+        }),
+        { status: 200 },
+      ),
+  );
+  vi.stubGlobal("fetch", request);
+  await service.refreshChatGPTModelCatalog();
+  expect(request).toHaveBeenCalledWith(
+    "https://api.openai.com/v1/models",
+    expect.objectContaining({ headers: { Authorization: "Bearer fixture-oauth-token" } }),
+  );
+  expect(service.getProviderDetail("openai")?.models.map((model) => model.id)).toEqual([
+    "openai/gpt-6.1-sol",
+  ]);
+  expect(service.findModel("openai/gpt-4.1-mini")).toBeUndefined();
+  expect(service.getProviderDetail("openai")?.models[0]?.name).toBe("Account coding model");
+});
+it("rejects malformed account catalogs instead of treating static API models as entitled", () => {
+  expect(() => service.parseChatGPTModelCatalog({ data: [] })).toThrow("invalid model catalog");
 });

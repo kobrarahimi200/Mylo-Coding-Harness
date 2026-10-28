@@ -8,6 +8,10 @@
  * color truth.
  */
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
+import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
+import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
+import typescriptWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 
 export type Monaco = typeof import("monaco-editor");
 
@@ -19,10 +23,15 @@ let monacoPromise: Promise<Monaco> | undefined;
 export function loadMonaco(): Promise<Monaco> {
   if (!monacoPromise) {
     self.MonacoEnvironment = {
-      // Diff computation, tokenization helpers etc. all run on the base
-      // editor worker; we register no language services, so it is the only
-      // worker monaco ever requests.
-      getWorker: () => new editorWorker(),
+      // The full Monaco import registers language services too. Routing their
+      // requests to editor.worker causes missing diagnostic/inlay-hint methods.
+      getWorker: (_moduleId, label) => {
+        if (label === "typescript" || label === "javascript") return new typescriptWorker();
+        if (label === "json") return new jsonWorker();
+        if (["css", "scss", "less"].includes(label)) return new cssWorker();
+        if (["html", "handlebars", "razor"].includes(label)) return new htmlWorker();
+        return new editorWorker();
+      },
     };
     monacoPromise = import("monaco-editor").then((monaco) => {
       defineModusTheme(monaco);

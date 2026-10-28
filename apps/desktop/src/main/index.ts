@@ -1,4 +1,4 @@
-import { app, BrowserWindow, type BrowserWindow as BrowserWindowType } from "electron";
+import { app, type BrowserWindow as BrowserWindowType } from "electron";
 import { getModelRuntime } from "./agent/model-service";
 import { shutdownAgentRuntime } from "./agent/runtime-registry";
 import { registerAppIpc } from "./ipc/register-app-ipc";
@@ -8,12 +8,16 @@ import { shutdownTerminals } from "./terminal/terminal-service";
 import { createMainWindow } from "./windows/main-window";
 
 let mainWindow: BrowserWindowType | null = null;
+let ipcRegistered = false;
 const startupTimeline = createStartupTimeline();
 
 startupTimeline.mark("main.entry");
 
 function boot(): void {
-  registerAppIpc({ startupTimeline });
+  if (!ipcRegistered) {
+    registerAppIpc({ startupTimeline });
+    ipcRegistered = true;
+  }
 
   mainWindow = createMainWindow({ startupTimeline });
 
@@ -26,10 +30,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (!mainWindow) {
-      return;
-    }
-
+    if (!mainWindow && ipcRegistered) boot();
+    if (!mainWindow) return;
+    mainWindow.show();
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
     }
@@ -53,9 +56,7 @@ if (!app.requestSingleInstanceLock()) {
     });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      boot();
-    }
+    if (!mainWindow && ipcRegistered) boot();
   });
 
   app.on("window-all-closed", () => {

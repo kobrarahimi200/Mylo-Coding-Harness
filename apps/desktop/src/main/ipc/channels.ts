@@ -15,6 +15,8 @@ export const IPC_CHANNELS = {
   agentList: "agent:list",
   agentCommands: "agent:commands",
   agentPreviewEdits: "agent:preview-edits",
+  checkpointPreview: "harness:checkpoint-preview",
+  checkpointRestore: "harness:checkpoint-restore",
   agentListEvents: "agent:list-events",
   agentListRuns: "agent:list-runs",
   agentEnsure: "agent:ensure",

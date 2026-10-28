@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import type { WorkspaceInfo } from "../../shared/contracts";
@@ -48,7 +49,15 @@ export function listWorkspaces(includeHidden = false): WorkspaceInfo[] {
   }
   const hidden = new Set(desktopPreferences().hiddenWorkspaceRoots ?? []);
   return [...workspaces.values()]
-    .filter((workspace) => includeHidden || !hidden.has(resolve(workspace.rootPath)))
+    .filter((workspace) => {
+      if (includeHidden) return true; // Keep records so archived chats remain discoverable.
+      if (hidden.has(resolve(workspace.rootPath))) return false;
+      try {
+        return statSync(workspace.rootPath).isDirectory();
+      } catch {
+        return false; // Deleted/moved projects must be reimported before selection.
+      }
+    })
     .sort(
       (a, b) =>
         Number(b.pinned) - Number(a.pinned) ||

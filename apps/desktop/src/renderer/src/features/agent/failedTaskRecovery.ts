@@ -1,4 +1,24 @@
 import type { AgentEventItem } from "../../../../shared/agent-events";
+import { classifyFailure, type TaskFailure } from "../../../../shared/task-failure";
+
+/** Neutral end states that are neither failures nor completions. */
+export function reviewOutcome(
+  items: AgentEventItem[],
+): { kind: "awaiting_review" | "rejected"; reason?: "plan" | "review" } | undefined {
+  const last = items.findLast(({ event }) =>
+    [
+      "run.started",
+      "run.completed",
+      "run.failed",
+      "run.cancelled",
+      "run.awaiting_review",
+      "run.rejected",
+    ].includes(event.type),
+  )?.event;
+  if (last?.type === "run.awaiting_review") return { kind: "awaiting_review" };
+  if (last?.type === "run.rejected") return { kind: "rejected", reason: last.reason };
+  return undefined;
+}
 
 /** Retry the actual user input, preserving context and attachments, never the internal planning prompt. */
 export function failedTaskRecovery(items: AgentEventItem[]) {
@@ -15,7 +35,9 @@ export function failedTaskRecovery(items: AgentEventItem[]) {
         ({ event }) =>
           event.type === "run.started" ||
           event.type === "run.completed" ||
-          event.type === "run.cancelled",
+          event.type === "run.cancelled" ||
+          event.type === "run.awaiting_review" ||
+          event.type === "run.rejected",
       )
   )
     return undefined;
@@ -34,5 +56,8 @@ export function failedTaskRecovery(items: AgentEventItem[]) {
     attachments: start.attachments,
     skills: start.skills,
     error: failure.message,
-  };
+    failure:
+      (failure.type === "run.failed" ? failure.failure : undefined) ??
+      classifyFailure(failure.message),
+  } satisfies { failure: TaskFailure } & Record<string, unknown>;
 }

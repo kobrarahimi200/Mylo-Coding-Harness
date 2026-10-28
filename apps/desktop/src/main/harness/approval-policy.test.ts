@@ -15,7 +15,7 @@ mkdirSync(workspace);
 mkdirSync(external);
 writeFileSync(join(workspace, "file.txt"), "workspace");
 writeFileSync(join(external, "outside.txt"), "outside");
-symlinkSync(external, join(workspace, "escape"));
+symlinkSync(external, join(workspace, "escape"), process.platform === "win32" ? "junction" : "dir");
 function tool(toolName: string, input: Record<string, unknown>) {
   return { toolName, input, type: "tool_call", toolCallId: "test" } as const;
 }
@@ -46,14 +46,14 @@ it("requires explicit command and file mutation approval but allows scoped reads
   });
 });
 
-it("fails closed for commands that need an OS sandbox", () => {
+it("blocks disallowed sensitive commands even when an OS sandbox is available", () => {
   expect(requiresExecutionIsolation("npm test")).toBe(false);
   expect(requiresExecutionIsolation("sudo rm -rf /tmp/data")).toBe(true);
   expect(
     assessToolCall(workspace, tool("bash", { command: "sudo rm -rf /tmp/data" })),
   ).toMatchObject({
     allowed: false,
-    reason: expect.stringContaining("no sandbox backend"),
+    reason: expect.stringContaining("sensitive-command policy"),
   });
 });
 

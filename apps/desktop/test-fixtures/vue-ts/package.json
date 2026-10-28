@@ -1,0 +1,14 @@
+{
+  "name": "mylo-vue-typescript-acceptance",
+  "private": true,
+  "dependencies": {
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "test": "node --test tests/counter.cjs",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit"
+  }
+}

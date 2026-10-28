@@ -8,6 +8,7 @@ import { app, dialog } from "electron";
 
 const root = process.env.MYLO_SMOKE_ROOT ?? mkdtempSync(join(tmpdir(), "mylo-electron-smoke-"));
 const restoring = process.env.MYLO_SMOKE_RESTORE === "1";
+let reopened = false;
 const project = join(root, "project");
 mkdirSync(project, { recursive: true });
 writeFileSync(join(project, "hello.txt"), "original\n");
@@ -16,6 +17,14 @@ process.env.PI_CODING_AGENT_DIR = join(root, "pi");
 process.env.PI_CODING_AGENT_SESSION_DIR = join(root, "sessions");
 mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 const errors = [];
+// Chat turns use content-visibility:auto. Chromium may omit an unpainted turn
+// from body.innerText even when its DOM and saved history are intact.
+const restoredResponseVisible = `Array.from(document.querySelectorAll('[data-turn]')).some(turn => {
+  if (!turn.textContent.includes('Saved fixture response')) return false;
+  turn.scrollIntoView({block:'nearest'});
+  const rect=turn.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 && turn.checkVisibility({contentVisibilityAuto:true,checkOpacity:true,checkVisibilityCSS:true});
+})`;
 const timeout = setTimeout(() => finish(new Error("Electron smoke test timed out")), 45000);
 function finish(error) {
   clearTimeout(timeout);
@@ -29,6 +38,7 @@ function finish(error) {
   app.exit(error ? 1 : 0);
 }
 app.on("browser-window-created", (_event, window) => {
+  window.webContents.setBackgroundThrottling(false);
   window.webContents.on("preload-error", (_event, path, error) =>
     errors.push(`${path}: ${error.stack}`),
   );
@@ -44,7 +54,7 @@ app.on("browser-window-created", (_event, window) => {
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
         throw new Error(
-          `UI condition not reached: ${source}\nRenderer errors: ${JSON.stringify(errors)}\nUI: ${await evaluate("document.body.innerText")}`,
+          `UI condition not reached: ${source}\nRenderer errors: ${JSON.stringify(errors)}\nHistory: ${JSON.stringify(await evaluate("window.modus.agent.list().then(sessions => Promise.all(sessions.map(async session => ({id: session.id, events: await window.modus.agent.listEvents(session.id)}))))"))}\nRendered turns: ${JSON.stringify(await evaluate("Array.from(document.querySelectorAll('[data-turn]')).map(el => ({text: el.textContent, visible: el.checkVisibility({contentVisibilityAuto:true}), rect: el.getBoundingClientRect().toJSON(), ancestors: (()=>{let node=el;const result=[];while(node){const s=getComputedStyle(node);result.push({tag:node.tagName,style:node.getAttribute('style'),class:node.className,display:s.display,visibility:s.visibility,opacity:s.opacity});node=node.parentElement;}return result;})()}))"))}\nUI: ${await evaluate("document.body.innerText")}`,
         );
       };
       if (process.argv.includes("--inspect-ui")) {
@@ -53,12 +63,26 @@ app.on("browser-window-created", (_event, window) => {
         console.log("READY: isolated Mylo UI inspection");
         return;
       }
+      if (process.env.MYLO_SMOKE_RESTORE === "reopen") {
+        if (!reopened) {
+          reopened = true;
+          window.once("closed", () => setImmediate(() => app.emit("activate")));
+          window.close();
+          return;
+        }
+        await waitFor(restoredResponseVisible);
+        assert.equal(await evaluate("typeof window.modus.workspace.list"), "function");
+        assert.deepEqual(errors, []);
+        console.log("PASS: closed macOS window reopens with working IPC and restored session");
+        finish();
+        return;
+      }
       if (restoring) {
         await waitFor('document.body.innerText.includes("Smoke project")');
         const workspaces = await evaluate("window.modus.workspace.list()");
         assert.equal(workspaces.length, 1);
         assert.equal(workspaces[0].displayName, "Smoke project");
-        await waitFor('document.body.innerText.includes("Saved fixture response")');
+        await waitFor(restoredResponseVisible);
         const sessions = await evaluate("window.modus.agent.list()");
         assert.ok(sessions.some((session) => session.title === "Saved smoke session"));
         assert.deepEqual(errors, []);
@@ -131,7 +155,7 @@ app.on("browser-window-created", (_event, window) => {
         `localStorage.setItem('mylo.workspace', ${JSON.stringify(restored.id)}); localStorage.setItem('mylo.session', ${JSON.stringify(manager.getSessionId())});`,
       );
       window.webContents.reload();
-      await waitFor('document.body.innerText.includes("Saved fixture response")');
+      await waitFor(restoredResponseVisible);
       finish();
     } catch (error) {
       finish(error);

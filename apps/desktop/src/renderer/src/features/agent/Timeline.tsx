@@ -95,7 +95,7 @@ export type RunBlockItem = {
   id: string;
   type: "run";
   runId: string;
-  status: "running" | "completed" | "failed" | "cancelled";
+  status: "running" | "completed" | "failed" | "cancelled" | "awaiting_review" | "rejected";
   delivery?: string;
   body?: string;
   startedAt: number;
@@ -397,6 +397,35 @@ export function buildBlocks(agentEvents: AgentEventItem[]): TimelineBlock[] {
       if (activeRunId === event.runId) {
         activeRunId = undefined;
       }
+      continue;
+    }
+
+    if (event.type === "run.awaiting_review" || event.type === "run.rejected") {
+      const status = event.type === "run.rejected" ? "rejected" : "awaiting_review";
+      const body =
+        event.type === "run.rejected"
+          ? event.reason === "plan"
+            ? "Plan rejected. Nothing was executed."
+            : "Result rejected."
+          : "Kept for manual review. File changes were preserved.";
+      const block = blockById.get(event.runId);
+      if (block?.type === "run") {
+        block.status = status;
+        block.body = body;
+        block.completedAt = eventAt;
+      } else {
+        blocks.push({
+          id: event.runId,
+          type: "run",
+          runId: event.runId,
+          status,
+          body,
+          startedAt: eventAt,
+          completedAt: eventAt,
+        });
+      }
+      order++;
+      if (activeRunId === event.runId) activeRunId = undefined;
       continue;
     }
 

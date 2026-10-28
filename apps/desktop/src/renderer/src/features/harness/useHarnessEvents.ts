@@ -10,8 +10,11 @@ function relevant(event: AgentEvent): boolean {
       "tool.started",
       "tool.ended",
       "run.started",
+      "session.status",
       "run.failed",
       "run.cancelled",
+      "run.awaiting_review",
+      "run.rejected",
       "runtime.error",
       "extension.notice",
     ].includes(event.type)

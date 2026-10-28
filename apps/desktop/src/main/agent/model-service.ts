@@ -16,13 +16,16 @@ import type {
   ThinkingLevel,
   ThinkingOption,
 } from "../../shared/contracts";
+import { classifyFailure, type TaskFailure } from "../../shared/task-failure";
 import { getPiCliAgentDir } from "./agent-paths";
 import { createAgentSettings } from "./agent-settings";
+import { diagnoseModelSelection, logProviderFailure } from "./model-diagnostics";
 
 let initialization: Promise<ModelRuntime> | undefined;
 let modelRuntimeSnapshot: ModelRuntime | undefined;
 let registry: ModelRegistry | undefined;
 let refreshErrors: string[] = [];
+let chatGPTModels: Map<string, string> | undefined;
 
 export function getModelRuntime(): Promise<ModelRuntime> {
   initialization ??= (async () => {
@@ -30,9 +33,11 @@ export function getModelRuntime(): Promise<ModelRuntime> {
       authPath: join(getPiCliAgentDir(), "auth.json"),
       modelsPath: join(getPiCliAgentDir(), "models.json"),
     });
+    await runtime.refresh({ allowNetwork: false });
     modelRuntimeSnapshot = runtime;
     registry = new ModelRegistry(runtime);
     refreshErrors = [];
+    await loadChatGPTModels(runtime);
     return runtime;
   })().catch((error: unknown) => {
     initialization = undefined;
@@ -47,6 +52,7 @@ export async function refreshRemoteModelCatalog(): Promise<ModelSettingsState> {
   const result = await runtime.refresh({ allowNetwork: true });
   refreshErrors = [...result.errors].map(([provider, error]) => `${provider}: ${error.message}`);
   if (result.aborted) refreshErrors.push("Model refresh was cancelled.");
+  await loadChatGPTModels(runtime);
   return getModelSettings();
 }
 
@@ -62,9 +68,17 @@ export function modelToId(model: Model<Api>): string {
 export function findModel(reference: string | undefined): Model<Api> | undefined {
   if (!reference || !registry) return undefined;
   const separator = reference.indexOf("/");
-  return separator < 1
-    ? undefined
-    : getModelRegistry().find(reference.slice(0, separator), reference.slice(separator + 1));
+  if (separator < 1) return undefined;
+  const provider = reference.slice(0, separator),
+    id = reference.slice(separator + 1);
+  if (
+    provider === "openai" &&
+    modelRuntimeSnapshot?.isUsingOAuth(provider) &&
+    chatGPTModels &&
+    !chatGPTModels.has(id)
+  )
+    return undefined;
+  return getModelRegistry().find(provider, id);
 }
 
 function thinkingOptions(model: Model<Api>): ThinkingOption[] {
@@ -99,7 +113,10 @@ function modelToInfo(model: Model<Api>, settings: SettingsManager): ModelInfo {
     id: modelToId(model),
     provider: model.provider,
     providerName: getModelRegistry().getProviderDisplayName(model.provider),
-    name: model.name,
+    name:
+      model.provider === "openai" && modelRuntimeSnapshot?.isUsingOAuth("openai")
+        ? (chatGPTModels?.get(model.id) ?? model.name)
+        : model.name,
     available: getModelRegistry().hasConfiguredAuth(model),
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
@@ -115,6 +132,7 @@ export function listModels(settings = createAgentSettings()): ModelInfo[] {
   if (!registry) return [];
   return getModelRegistry()
     .getAvailable()
+    .filter(accountAllowsModel)
     .map((model) => modelToInfo(model, settings))
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
 }
@@ -130,7 +148,9 @@ export function listProviders(): ModelProviderInfo[] {
   return [...new Set(registry.getAll().map((model) => model.provider))]
     .map((id) => {
       const models = registry.getAll().filter((model) => model.provider === id);
-      const available = models.filter((model) => registry.hasConfiguredAuth(model));
+      const available = models.filter(
+        (model) => registry.hasConfiguredAuth(model) && accountAllowsModel(model),
+      );
       const status = registry.getProviderAuthStatus(id);
       const source = providerConfigSource(status.source);
       return {
@@ -155,7 +175,7 @@ export function getProviderDetail(provider: string): ModelProviderDetail | undef
         authMethods: providerAuthMethods(provider),
         models: getModelRegistry()
           .getAll()
-          .filter((model) => model.provider === provider)
+          .filter((model) => model.provider === provider && accountAllowsModel(model))
           .map((model) => modelToInfo(model, settings)),
       }
     : undefined;
@@ -190,7 +210,9 @@ export function getDefaultModelId(
 ): string | undefined {
   const provider = settings.getDefaultProvider();
   const model = settings.getDefaultModel();
-  return provider && model ? `${provider}/${model}` : models[0]?.id;
+  if (!provider || !model) return models[0]?.id;
+  const selected = `${provider}/${model}`;
+  return models.some((entry) => entry.id === selected) ? selected : undefined;
 }
 
 export function getDefaultModel(): Model<Api> | undefined {
@@ -272,25 +294,95 @@ function providerAuthMethods(
     });
   return methods;
 }
+const CONNECTION_TEST_TIMEOUT_MS = 20000;
+
 export async function testModelConnection(
   reference: string,
 ): Promise<import("../../shared/provider-auth").ProviderConnectionResult> {
-  const model = findModel(reference);
-  if (!model) throw new Error("Select an available model before testing the connection.");
+  const failed = (failure: TaskFailure) => ({
+    ok: false,
+    message: failure.message,
+    category: failure.category,
+    recovery: failure.recovery,
+  });
   const runtime = await getModelRuntime();
+  const diagnosis = diagnoseModelSelection(reference, {
+    find: (value) => findModel(value),
+    isProviderConfigured: (provider) => runtime.getProviderAuthStatus(provider).configured,
+  });
+  if (diagnosis) return failed(diagnosis);
+  const model = findModel(reference);
+  if (!model) return failed(classifyFailure("Model is not registered in the provider catalog."));
   try {
     const response = await runtime.completeSimple(
       model,
       { messages: [{ role: "user", content: "Reply with OK.", timestamp: Date.now() }] },
-      { maxTokens: 16, signal: AbortSignal.timeout(30000) },
+      { maxTokens: 16, signal: AbortSignal.timeout(CONNECTION_TEST_TIMEOUT_MS) },
     );
-    if (response.stopReason === "error" || response.stopReason === "aborted")
-      return {
-        ok: false,
-        message: response.errorMessage || "The provider did not complete the connection test.",
-      };
+    if (response.stopReason === "error" || response.stopReason === "aborted") {
+      const message = response.errorMessage || "The provider did not complete the connection test.";
+      logProviderFailure("test-connection", reference, new Error(message));
+      return failed(
+        classifyFailure(response.stopReason === "aborted" ? `Timed out: ${message}` : message),
+      );
+    }
     return { ok: true, message: `Received a response from ${reference}.` };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    logProviderFailure("test-connection", reference, error);
+    return failed(classifyFailure(error));
   }
+}
+
+function accountAllowsModel(model: Model<Api>): boolean {
+  return (
+    model.provider !== "openai" ||
+    !modelRuntimeSnapshot?.isUsingOAuth("openai") ||
+    !chatGPTModels ||
+    chatGPTModels.has(model.id)
+  );
+}
+export function parseChatGPTModelCatalog(value: unknown): Map<string, string> {
+  if (!value || typeof value !== "object" || !("models" in value) || !Array.isArray(value.models))
+    throw new Error("ChatGPT returned an invalid model catalog.");
+  return new Map(
+    value.models.flatMap((model: unknown) => {
+      if (
+        !model ||
+        typeof model !== "object" ||
+        !("visibility" in model) ||
+        model.visibility !== "list" ||
+        !("slug" in model) ||
+        typeof model.slug !== "string"
+      )
+        return [];
+      const name =
+        "display_name" in model && typeof model.display_name === "string"
+          ? model.display_name
+          : model.slug;
+      return [[model.slug, name] as const];
+    }),
+  );
+}
+async function loadChatGPTModels(runtime: ModelRuntime): Promise<void> {
+  if (!runtime.isUsingOAuth("openai")) {
+    chatGPTModels = undefined;
+    return;
+  }
+  try {
+    const auth = await runtime.getAuth("openai");
+    if (!auth?.auth.apiKey)
+      throw new Error("ChatGPT access token is not available. Reconnect the account.");
+    const response = await fetch("https://api.openai.com/v1/models", {
+      headers: { Authorization: `Bearer ${auth.auth.apiKey}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) throw new Error(`ChatGPT model catalog request failed (${response.status}).`);
+    chatGPTModels = parseChatGPTModelCatalog(await response.json());
+  } catch (error) {
+    refreshErrors.push(error instanceof Error ? error.message : String(error));
+  }
+}
+export async function refreshChatGPTModelCatalog(): Promise<void> {
+  chatGPTModels = undefined;
+  await loadChatGPTModels(await getModelRuntime());
 }

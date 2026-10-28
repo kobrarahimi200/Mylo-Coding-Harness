@@ -7,6 +7,7 @@ import type {
   PromptImageAttachment,
   SkillSelection,
 } from "../../../shared/contracts";
+import type { AgentMode } from "../../../shared/harness";
 import { NavigationRail } from "../components/layout/NavigationRail";
 import { usePanelLayout } from "../components/layout/usePanelLayout";
 import { SIDEBAR_TRANSITION, Sidebar } from "../components/Sidebar";
@@ -20,7 +21,6 @@ import { type AgentEventItem, optimisticUserPromptEvents } from "../features/age
 import { ChatPane } from "../features/agent/ChatPane";
 import { ExtensionDialog } from "../features/agent/ExtensionDialog";
 import { SessionTitlePopover } from "../features/agent/SessionTitlePopover";
-import { Calculator } from "../features/calculator/Calculator";
 import { Composer } from "../features/composer/Composer";
 import type {
   ChatComposerDraft,
@@ -29,15 +29,18 @@ import type {
 import { addContextItemToDraft } from "../features/composer/chatComposerDraft";
 import { createEmptyComposerDraft } from "../features/composer/composerDraft";
 import { contextItemKey } from "../features/composer/composerTokens";
+import { useAgentMode, writeAgentMode } from "../features/composer/useAgentMode";
 import { FilesPanel } from "../features/files/FilesPanel";
+import { AgentWorkspace } from "../features/harness/AgentWorkspace";
 import { BottomPanel } from "../features/harness/BottomPanel";
-import {
-  HarnessDiff,
-  HarnessPlan,
-  HarnessStatus,
-  HarnessTimeline,
-} from "../features/harness/HarnessPanels";
+import { HarnessDiff, HarnessPlan, HarnessTimeline } from "../features/harness/HarnessPanels";
+import { harnessState } from "../features/harness/harness-state";
+import { ProjectExplorer } from "../features/harness/ProjectExplorer";
+import { pendingPlanQuestion } from "../features/harness/plan-actions";
 import { useHarnessEvents } from "../features/harness/useHarnessEvents";
+import { useWorkspacePanels } from "../features/harness/useWorkspacePanels";
+import { WorkspaceHeader } from "../features/harness/WorkspaceHeader";
+import type { SettingsSectionId } from "../features/settings/SettingsPanel";
 import { SkillsSettingsPanel } from "../features/settings/SkillsSettingsPanel";
 import { useGitBranch } from "../lib/useGitBranch";
 import { RuntimeNotice } from "./RuntimeNotice";
@@ -71,9 +74,18 @@ export function App() {
   >({});
   const [heroContextItems, setHeroContextItems] = useState<ContextItem[]>([]);
   const [heroDraft, setHeroDraft] = useState(createEmptyComposerDraft);
+  const [heroMode, setHeroMode] = useAgentMode();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>("model-provider");
+  function openProviderSettings() {
+    setSettingsSection("model-provider");
+    setSettingsOpen(true);
+  }
+  const setWorkspaceSettingsOpen = useCallback((open: boolean) => {
+    if (open) setSettingsSection("model-provider");
+    setSettingsOpen(open);
+  }, []);
   const [workspacePanel, setWorkspacePanel] = useState("chat");
   const [bottomTab, setBottomTab] = useState("");
   const {
@@ -101,7 +113,7 @@ export function App() {
     deleteProjectChats,
     removeProject,
     revealProject,
-  } = useWorkspaceSessions(setSettingsOpen);
+  } = useWorkspaceSessions(setWorkspaceSettingsOpen);
   const focusSession = useCallback(
     (id: string) => {
       setActiveSessionId(id);
@@ -118,14 +130,10 @@ export function App() {
     dismissNotice,
     restoreError,
     publishLocalAgentEvent,
-  } = useAgentEvents(
-    activeSessionId,
-    refreshSessions,
-    focusSession,
-    updateSession,
-    !settingsOpen && !calculatorOpen,
-  );
+  } = useAgentEvents(activeSessionId, refreshSessions, focusSession, updateSession, !settingsOpen);
   const harness = useHarnessEvents(activeSessionId);
+  const panels = useWorkspacePanels();
+  const taskState = harnessState(harness.items, extensionQuestions, activeSessionId);
   const {
     models,
     model,
@@ -149,10 +157,11 @@ export function App() {
     responsiveSidebarOpen,
     sidebarMaxWidth,
     inspectorMaxWidth,
-  } = usePanelLayout(Boolean(activeWorkspace));
+  } = usePanelLayout(Boolean(activeWorkspace), panels.reservedWidth);
   const [inspectorTab, setInspectorTab] = useState("files");
   const [filesRevealPath, setFilesRevealPath] = useState<string | undefined>();
   useInitialHydration({
+    setSessionCreateError,
     setWorkspaces,
     setActiveWorkspace,
     setAgentSessions,
@@ -166,10 +175,12 @@ export function App() {
     _delivery?: PromptDelivery,
     attachments?: PromptImageAttachment[],
     skills?: SkillSelection[],
+    modeOverride?: AgentMode,
   ): Promise<void> {
     if (!message.trim() && !attachments?.length) {
       return;
     }
+    const mode = modeOverride ?? heroMode;
     const session = await createSession(
       activeWorkspace,
       model,
@@ -183,6 +194,7 @@ export function App() {
     if (!session) {
       throw new Error("Select a workspace and model before sending.");
     }
+    writeAgentMode(mode, session.id);
     setWorkspacePanel("chat");
     hubRef.current.prepare(session.id);
     const userMessageId = `local-user:${crypto.randomUUID()}`;
@@ -201,6 +213,7 @@ export function App() {
       .prompt({
         paths: context.map((item) => item.path),
         delivery: "normal",
+        mode,
         sessionId: session.id,
         message,
         userMessageId,
@@ -234,7 +247,8 @@ export function App() {
 
   const activeCwd = activeSession?.cwd ?? activeWorkspace?.rootPath;
   const branch = useGitBranch(activeCwd);
-  const canCreateSession = Boolean(activeWorkspace) && Boolean(model);
+  const canCreateSession =
+    Boolean(activeWorkspace) && models.some((entry) => entry.id === model && entry.available);
   const workspaceById = useMemo(
     () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
     [workspaces],
@@ -270,6 +284,16 @@ export function App() {
     [activeSession, updateSessionComposerDraft],
   );
 
+  // A plan question is answered inline wherever the plan card is visible.
+  const planVisible = panels.agentOpen || workspacePanel === "chat" || workspacePanel === "plan";
+  const modalQuestion = extensionQuestions.find(
+    (q) => !planVisible || q.sessionId !== activeSessionId || !q.questions[0]?.plan,
+  );
+  const questionSession = agentSessions.find((session) => session.id === modalQuestion?.sessionId);
+  const questionContext = questionSession
+    ? `${workspaceById.get(questionSession.workspaceId)?.displayName ?? "Project"} · ${questionSession.cwd}`
+    : undefined;
+
   const openWorkspaceFile = useCallback((path: string) => {
     setWorkspacePanel("editor");
     setFilesRevealPath(path);
@@ -282,14 +306,39 @@ export function App() {
           <ImageViewerProvider>
             <div className="app-root flex min-h-0 flex-1 flex-col bg-panel text-fg">
               <WindowTitleBar />
+              <WorkspaceHeader
+                workspace={activeWorkspace}
+                branch={branch}
+                model={activeSession?.model ?? model}
+                models={models}
+                status={taskState.label}
+                busy={taskState.busy}
+                agentOpen={panels.agentOpen}
+                onModel={(next) => void changeDefaultModel(next).catch(reportModelFailure)}
+                onSettings={openProviderSettings}
+                onToggleAgent={() => {
+                  panels.setAgentOpen((open) => !open);
+                  setInspectorOpen(false);
+                }}
+                onStop={() => {
+                  if (activeSessionId)
+                    void window.modus.agent
+                      .abort(activeSessionId)
+                      .catch((e: unknown) => setSessionCreateError(String(e)));
+                }}
+              />
               {restoreError ? (
                 <p role="alert" className="px-4 py-2 text-sm text-danger">
                   {restoreError}
                 </p>
               ) : null}
               {notice ? <RuntimeNotice notice={notice} onDismiss={dismissNotice} /> : null}
-              {extensionQuestions[0] ? (
-                <ExtensionDialog key={extensionQuestions[0].id} request={extensionQuestions[0]} />
+              {modalQuestion ? (
+                <ExtensionDialog
+                  key={modalQuestion.id}
+                  request={modalQuestion}
+                  contextLabel={questionContext}
+                />
               ) : null}
 
               <div className="flex min-h-0 min-w-0 flex-1 bg-chrome">
@@ -298,30 +347,22 @@ export function App() {
                   hasWorkspace={Boolean(activeWorkspace)}
                   onNavigate={(section) => {
                     setSettingsOpen(false);
-                    setCalculatorOpen(false);
                     if (section === "projects") showSidebar();
                     else if (section === "tests") setBottomTab("tests");
                     else setWorkspacePanel(section === "history" ? "timeline" : section);
                   }}
-                  calculatorOpen={calculatorOpen}
                   onHome={() => {
-                    setCalculatorOpen(false);
                     setSettingsOpen(false);
+                    setWorkspacePanel("chat");
                   }}
-                  onCalculator={() => {
-                    setCalculatorOpen(true);
-                    setSettingsOpen(false);
-                    setInspectorOpen(false);
-                  }}
-                  onSettings={() => {
-                    setCalculatorOpen(false);
-                    setSettingsOpen(true);
-                  }}
+                  onSettings={openProviderSettings}
                 />
                 <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-tl-xl border border-hairline bg-canvas">
                   <Activity mode={settingsOpen ? "visible" : "hidden"}>
                     <Suspense fallback={<ModusLoadingFallback />}>
                       <SettingsPanel
+                        activeSection={settingsSection}
+                        onSectionChange={setSettingsSection}
                         sessionId={activeSessionId ?? undefined}
                         onClose={() => setSettingsOpen(false)}
                         onReloadConfiguration={reloadConfiguration}
@@ -330,10 +371,7 @@ export function App() {
                       />
                     </Suspense>
                   </Activity>
-                  <Activity mode={!settingsOpen && calculatorOpen ? "visible" : "hidden"}>
-                    <Calculator active={calculatorOpen} />
-                  </Activity>
-                  <Activity mode={!settingsOpen && !calculatorOpen ? "visible" : "hidden"}>
+                  <Activity mode={!settingsOpen ? "visible" : "hidden"}>
                     <div className="workspace-layout" ref={layoutRowRef}>
                       <Sidebar
                         activityBySession={activityBySession}
@@ -365,10 +403,17 @@ export function App() {
                         open={responsiveSidebarOpen}
                         width={sidebarWidth}
                         workspaces={workspaces}
-                      />
+                      >
+                        <ProjectExplorer
+                          cwd={activeCwd}
+                          sessionId={activeSessionId}
+                          onFile={openWorkspaceFile}
+                          onSkills={() => setWorkspacePanel("skills")}
+                        />
+                      </Sidebar>
 
                       <m.main
-                        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-canvas"
+                        className="mylo-center relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-canvas"
                         layout={!reduceMotion}
                         layoutDependency={responsiveSidebarOpen}
                         transition={{ layout: SIDEBAR_TRANSITION }}
@@ -410,7 +455,10 @@ export function App() {
                               activeWorkspace={activeWorkspace}
                               branch={branch}
                               inspectorOpen={responsiveInspectorOpen}
-                              onToggleInspector={() => setInspectorOpen((open) => !open)}
+                              onToggleInspector={() => {
+                                panels.setAgentOpen(false);
+                                setInspectorOpen((open) => !open);
+                              }}
                             />
                           </div>
                         </header>
@@ -422,7 +470,7 @@ export function App() {
                         ) : null}
 
                         <div className="mylo-tabs" role="tablist" aria-label="Workspace views">
-                          {["chat", "plan", "timeline", "editor", "diff", "skills"].map((panel) => (
+                          {["chat", "editor", "diff", "plan", "timeline", "skills"].map((panel) => (
                             <button
                               role="tab"
                               aria-selected={workspacePanel === panel}
@@ -431,8 +479,9 @@ export function App() {
                               disabled={!activeWorkspace && panel !== "chat"}
                               onClick={() => setWorkspacePanel(panel)}
                             >
-                              {panel[0]?.toUpperCase()}
-                              {panel.slice(1)}
+                              {panel === "editor"
+                                ? "Code"
+                                : panel[0]?.toUpperCase() + panel.slice(1)}
                             </button>
                           ))}
                           <button
@@ -457,11 +506,7 @@ export function App() {
                                   animate={{ opacity: 1 }}
                                   className="flex min-h-0 min-w-0 flex-1"
                                   exit={{ opacity: 0 }}
-                                  initial={
-                                    initialEventsBySession[activeSession.id]
-                                      ? false
-                                      : { opacity: 0 }
-                                  }
+                                  initial={false}
                                   key="conversation"
                                   layout={reduceMotion ? false : "position"}
                                   layoutDependency={responsiveSidebarOpen}
@@ -476,6 +521,11 @@ export function App() {
                                       initialEvents={initialEventsBySession[activeSession.id]}
                                       key={activeSession.id}
                                       models={models}
+                                      planQuestion={pendingPlanQuestion(
+                                        extensionQuestions,
+                                        activeSession.id,
+                                      )}
+                                      showPlan={!panels.agentOpen}
                                       onModelChange={(next) =>
                                         void changeDefaultModel(next).catch(reportModelFailure)
                                       }
@@ -499,7 +549,7 @@ export function App() {
                                       }}
                                       onOpenFile={openWorkspaceFile}
                                       onSessionsChanged={() => void refreshSessions()}
-                                      onOpenSettings={() => setSettingsOpen(true)}
+                                      onOpenSettings={openProviderSettings}
                                       session={activeSession}
                                       workspace={
                                         workspaceById.get(activeSession.workspaceId) ??
@@ -553,6 +603,8 @@ export function App() {
                                           workspaces={workspaces}
                                         />
                                       }
+                                      mode={heroMode}
+                                      onModeChange={setHeroMode}
                                       model={model}
                                       models={models}
                                       onContextChange={setHeroContextItems}
@@ -581,25 +633,39 @@ export function App() {
                             </AnimatePresence>
                           </div>
                         </Activity>
-                        {workspacePanel !== "chat" ? (
+                        <div
+                          className="min-h-0 flex-1 flex-col overflow-hidden"
+                          style={{ display: workspacePanel === "editor" ? "flex" : "none" }}
+                        >
+                          <FilesPanel
+                            cacheId={`workspace:${activeCwd ?? "none"}`}
+                            key={activeCwd}
+                            cwd={activeCwd}
+                            onAddToChat={addContextToChat}
+                            revealPath={filesRevealPath}
+                            onRevealConsumed={() => setFilesRevealPath(undefined)}
+                          />
+                        </div>
+                        {workspacePanel !== "chat" && workspacePanel !== "editor" ? (
                           <div className="min-h-0 flex-1 overflow-hidden">
                             {workspacePanel === "plan" ? (
-                              <HarnessPlan items={harness.items} />
+                              <HarnessPlan
+                                items={harness.items}
+                                questions={extensionQuestions}
+                                sessionId={activeSessionId}
+                                onError={setSessionCreateError}
+                              />
                             ) : workspacePanel === "timeline" ? (
                               <HarnessTimeline items={harness.items} />
-                            ) : workspacePanel === "editor" ? (
-                              <FilesPanel
-                                key={activeCwd}
-                                cwd={activeCwd}
-                                onAddToChat={addContextToChat}
-                                revealPath={filesRevealPath}
-                                onRevealConsumed={() => setFilesRevealPath(undefined)}
-                              />
-                            ) : workspacePanel === "diff" ? (
+                            ) : workspacePanel === "editor" ? null : workspacePanel === "diff" ? (
                               <HarnessDiff items={harness.items} />
                             ) : (
                               <div className="h-full overflow-auto p-6">
-                                <SkillsSettingsPanel cwd={activeCwd} sessionId={activeSessionId} />
+                                <SkillsSettingsPanel
+                                  cwd={activeCwd}
+                                  sessionId={activeSessionId}
+                                  busy={taskState.busy}
+                                />
                               </div>
                             )}
                           </div>
@@ -610,30 +676,49 @@ export function App() {
                             workspace={activeWorkspace}
                             tab={bottomTab}
                             onTabChange={setBottomTab}
-                            canRunChecks={
-                              canCreateSession && !activityBySession[activeSessionId ?? ""]?.running
-                            }
+                            canRunChecks={canCreateSession && !taskState.busy}
                             onRunChecks={() => {
                               const message =
                                 "Run the repository test, lint, and typecheck checks. Report failures and request approval before making any corrections.";
                               if (activeSessionId)
                                 void window.modus.agent
-                                  .prompt({ sessionId: activeSessionId, message })
+                                  .prompt({ sessionId: activeSessionId, message, mode: "agent" })
                                   .catch((cause: unknown) => setSessionCreateError(String(cause)));
                               else
-                                void submitHeroPrompt(message, []).catch((cause: unknown) =>
-                                  setSessionCreateError(String(cause)),
-                                );
+                                void submitHeroPrompt(
+                                  message,
+                                  [],
+                                  undefined,
+                                  undefined,
+                                  undefined,
+                                  "agent",
+                                ).catch((cause: unknown) => setSessionCreateError(String(cause)));
                             }}
                           />
                         ) : null}
                       </m.main>
-                      {activeWorkspace ? (
-                        <HarnessStatus
+                      {panels.agentOpen ? (
+                        <AgentWorkspace
+                          key={activeWorkspace?.id ?? "no-project"}
                           items={harness.items}
                           questions={extensionQuestions}
                           sessionId={activeSessionId}
+                          workspace={activeWorkspace}
+                          canGenerate={canCreateSession}
+                          onGenerate={(message) =>
+                            submitHeroPrompt(message, [], undefined, undefined, undefined, "agent")
+                          }
+                          onStop={() => {
+                            if (activeSessionId)
+                              void window.modus.agent
+                                .abort(activeSessionId)
+                                .catch((e: unknown) => setSessionCreateError(String(e)));
+                          }}
+                          onView={setWorkspacePanel}
                           onError={setSessionCreateError}
+                          width={panels.agentWidth}
+                          onWidthChange={panels.setAgentWidth}
+                          onClose={() => panels.setAgentOpen(false)}
                         />
                       ) : null}
                       {responsiveInspectorOpen ? (
@@ -652,7 +737,7 @@ export function App() {
                             cwd={activeCwd}
                             maxWidth={inspectorMaxWidth}
                             onOpenChange={setInspectorOpen}
-                            onOpenSettings={() => setSettingsOpen(true)}
+                            onOpenSettings={openProviderSettings}
                             onTabChange={setInspectorTab}
                             onWidthChange={setInspectorWidth}
                             onAddToChat={addContextToChat}

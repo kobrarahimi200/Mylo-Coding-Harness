@@ -8,9 +8,11 @@ import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
 export function SkillsSettingsPanel({
   cwd,
   sessionId,
+  busy = false,
 }: {
   cwd: string | undefined;
   sessionId: string | undefined;
+  busy?: boolean;
 }) {
   const [state, setState] = useState<SkillState>({ skills: [], diagnostics: [] });
   const [folders, setFolders] = useState<string[]>([]);
@@ -67,7 +69,7 @@ export function SkillsSettingsPanel({
       </p>
       <button
         type="button"
-        disabled={!sessionId || loading}
+        disabled={!sessionId || loading || busy}
         onClick={() => {
           if (sessionId)
             void window.modus.skills
@@ -81,12 +83,37 @@ export function SkillsSettingsPanel({
       >
         Add skill folder
       </button>
+      <button
+        type="button"
+        className="mylo-button ml-3"
+        disabled={!sessionId || loading || busy}
+        title={
+          busy
+            ? "Stop the current task before refreshing skills"
+            : "Reload trusted Pi resources and refresh discovered skills"
+        }
+        onClick={() => {
+          if (!sessionId) return;
+          setLoading(true);
+          void window.modus.app
+            .reloadConfiguration()
+            .then(() => window.modus.skills.list(sessionId))
+            .then(setState)
+            .catch((cause: unknown) => setError(String(cause)))
+            .finally(() => setLoading(false));
+        }}
+      >
+        Refresh skills
+      </button>
+      {busy ? (
+        <p className="text-xs text-fg-faint">Stop the agent before changing its skills.</p>
+      ) : null}
       {folders.map((path) => (
         <div className="flex gap-3 text-sm" key={path}>
           <span className="break-all">{path}</span>
           <button
             type="button"
-            disabled={!sessionId}
+            disabled={!sessionId || busy}
             onClick={() => {
               if (sessionId)
                 void window.modus.skills
@@ -138,11 +165,12 @@ export function SkillsSettingsPanel({
       ) : null}
       <div className="space-y-1">
         {filtered.map((skill) => (
-          <div key={skill.path} className="flex items-center gap-3">
+          <div key={skill.path} className="mylo-skill-card">
             <input
               type="checkbox"
               aria-label={`Enable ${skill.name}`}
               checked={skill.enabled !== false}
+              disabled={busy || loading}
               onChange={(event) => {
                 if (sessionId)
                   void window.modus.skills
@@ -167,6 +195,20 @@ export function SkillsSettingsPanel({
               meta={skill.path}
               title={skill.name}
             />
+            <details className="mylo-skill-details">
+              <summary>Details</summary>
+              <p>{skill.description}</p>
+              <dl>
+                <dt>Source</dt>
+                <dd>
+                  {skill.source} · {skill.scope}
+                </dd>
+                <dt>File</dt>
+                <dd>{skill.path}</dd>
+                <dt>Status</dt>
+                <dd>{skill.enabled === false ? "Disabled" : "Enabled"}</dd>
+              </dl>
+            </details>
           </div>
         ))}
       </div>

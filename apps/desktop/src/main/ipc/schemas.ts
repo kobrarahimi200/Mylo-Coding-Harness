@@ -54,6 +54,7 @@ export const agentPromptSchema = z
     message: z.string().trim(),
     paths: z.array(nonEmptyString).optional(),
     delivery: z.enum(["normal", "steer", "follow-up"]).optional(),
+    mode: z.enum(["ask", "plan", "agent"]).optional(),
     userMessageId: optionalNonEmptyString,
     attachments: z.array(promptImageAttachmentSchema).optional(),
     skills: z.array(skillSelectionSchema).max(1).optional(),
@@ -128,6 +129,7 @@ export const filesWriteSchema = z.object({
   cwd: nonEmptyString,
   path: nonEmptyString,
   content: z.string(),
+  expectedContent: z.string().optional(),
 });
 
 export const previewReadSchema = z.object({

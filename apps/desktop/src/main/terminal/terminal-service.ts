@@ -173,9 +173,26 @@ function ensureHost(window?: BrowserWindowType): ChildProcessWithoutNullStreams 
   host = spawn(resolveSidecarPath(), [], {
     windowsHide: true,
   });
+  const currentHost = host;
   hostBuffer = "";
 
+  const failHost = (message: string) => {
+    if (host !== currentHost) return;
+    host = undefined;
+    for (const terminal of terminals.values()) {
+      if (terminal.exited) continue;
+      emit({
+        type: "terminal.data",
+        terminalId: terminal.info.id,
+        data: `\r\n[pty-host error] ${message}\r\n`,
+      });
+      emit({ type: "terminal.exit", terminalId: terminal.info.id, exitCode: 1 });
+      markExited(terminal.info.id, 1);
+    }
+  };
+
   host.stdout.on("data", (chunk) => {
+    if (host !== currentHost) return;
     hostBuffer += chunk.toString("utf8");
 
     while (true) {
@@ -192,7 +209,13 @@ function ensureHost(window?: BrowserWindowType): ChildProcessWithoutNullStreams 
         continue;
       }
 
-      handleHostEvent(JSON.parse(line) as HostEvent);
+      try {
+        handleHostEvent(JSON.parse(line) as HostEvent);
+      } catch (error) {
+        failHost(`Invalid terminal host response: ${String(error)}`);
+        currentHost.kill();
+        return;
+      }
     }
   });
 
@@ -200,7 +223,13 @@ function ensureHost(window?: BrowserWindowType): ChildProcessWithoutNullStreams 
     console.error("[modus-pty-host]", chunk.toString("utf8"));
   });
 
+  host.once("error", (error) =>
+    failHost(
+      `Cannot start terminal host: ${error.message}. Rebuild with npm --workspace @modus/desktop run build:pty.`,
+    ),
+  );
   host.on("exit", () => {
+    if (host !== currentHost) return;
     host = undefined;
     for (const terminal of terminals.values()) {
       if (!terminal.exited) {

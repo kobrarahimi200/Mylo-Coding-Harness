@@ -39,11 +39,12 @@ export function createMainWindow({
     y: workArea.y + Math.round((workArea.height - height) / 2),
     width,
     height,
-    minWidth: Math.min(1120, width),
-    minHeight: Math.min(720, height),
+    // Let the renderer enter its compact layout on smaller desktop windows.
+    minWidth: Math.min(820, width),
+    minHeight: Math.min(600, height),
     title: "Mylo Coding Harness",
     icon: appIconPath,
-    backgroundColor: "#131314",
+    backgroundColor: "#0B1020",
     show: true,
     // 彻底放弃 Windows native window controls overlay —— 它的 caption buttons 绘制 + hover 命中区
     // 由系统决定，不严格遵循 titleBarOverlay.height，会"伸出" menubar。

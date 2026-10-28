@@ -1,29 +1,38 @@
 import { Dialog } from "@base-ui/react/dialog";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contracts";
 import { CodeDiff } from "../../components/code/CodeDiff";
 import { Button } from "../../components/ui/Button";
 import { DialogBody, DialogSurface } from "../../components/ui/DialogSurface";
 
-export function ExtensionDialog({ request }: { request: QuestionRequest }) {
+export function ExtensionDialog({
+  request,
+  contextLabel,
+}: {
+  request: QuestionRequest;
+  contextLabel?: string | undefined;
+}) {
   const question = request.questions[0];
   const [value, setValue] = useState(question?.prefill ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [open, setOpen] = useState(true);
-  const [response, setResponse] = useState<{ selected?: string; skipped: boolean }>();
+  const submitting = useRef(false);
+  const [readyDiffs, setReadyDiffs] = useState<string[]>([]);
+  const markReady = (id: string) =>
+    setReadyDiffs((current) => (current.includes(id) ? current : [...current, id]));
+  const diffsReady =
+    (!question?.codeChange || readyDiffs.includes("proposal")) &&
+    (question?.codeChanges ?? []).every((_, index) => readyDiffs.includes(`final:${index}`));
   if (!question) return null;
 
-  function respond(selected?: string, skipped = false): void {
-    if (busy || !question) return;
+  async function respond(selected?: string, skipped = false): Promise<void> {
+    if (submitting.current || !question) return;
+    submitting.current = true;
     setBusy(true);
-    setResponse({ ...(selected !== undefined ? { selected } : {}), skipped });
     setOpen(false);
-  }
-
-  async function submitResponse(): Promise<void> {
-    if (!question || !response) return;
-    const { selected, skipped } = response;
+    // Approval is a user action, not an animation-completion side effect.
+    // Background/occluded windows can suspend closing animations indefinitely.
     try {
       const answer: QuestionAnswer = {
         questionId: question.id,
@@ -36,6 +45,7 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
         skipped,
       });
     } catch (caught) {
+      submitting.current = false;
       setBusy(false);
       setOpen(true);
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -46,10 +56,7 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
-        if (!open) respond(undefined, true);
-      }}
-      onOpenChangeComplete={(open) => {
-        if (!open) void submitResponse();
+        if (!open) void respond(undefined, true);
       }}
     >
       <DialogSurface size="compact">
@@ -57,15 +64,44 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
           {question.header}
         </Dialog.Title>
         <DialogBody className="px-5 py-4">
+          <p className="mylo-eyebrow">
+            {question.plan
+              ? "PLAN APPROVAL"
+              : question.codeChange
+                ? "FILE CHANGE"
+                : question.codeChanges
+                  ? "FINAL REVIEW"
+                  : question.id === "tool-approval"
+                    ? "COMMAND APPROVAL"
+                    : "HUMAN REVIEW"}
+          </p>
+          {contextLabel ? (
+            <p className="mt-2 break-all text-xs text-fg-faint">{contextLabel}</p>
+          ) : null}
+          {question.codeChange ? (
+            <p className="mt-2 text-xs text-fg-muted">
+              Approving applies your reviewed content to this file. A rollback checkpoint is
+              preserved first.
+            </p>
+          ) : question.id === "tool-approval" ? (
+            <p className="mt-2 text-xs text-fg-muted">
+              This command can change project files. It runs inside the workspace sandbox; shell
+              changes are not included in file rollback.
+            </p>
+          ) : null}
           {question.detail ? (
             <Dialog.Description className="mt-2 whitespace-pre-wrap break-words text-fg-muted text-sm">
               {question.detail}
             </Dialog.Description>
           ) : null}
-          {question.codeChanges?.map((change) => (
+          {question.codeChanges?.map((change, index) => (
             <section key={change.path} className="mt-4">
               <h3 className="mb-2 text-xs">{change.path}</h3>
-              <CodeDiff before={change.before} after={change.after} />
+              <CodeDiff
+                before={change.before}
+                after={change.after}
+                onReady={() => markReady(`final:${index}`)}
+              />
             </section>
           ))}
           {question.options.length > 0 ? (
@@ -74,7 +110,7 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
                 <button
                   key={option.label}
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !diffsReady}
                   className="break-words rounded-md border border-hairline px-3 py-2 text-left text-sm text-fg transition-colors hover:bg-hover focus-visible:outline-focus-ring"
                   onClick={() => void respond(option.label)}
                 >
@@ -97,6 +133,7 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
                   before={question.codeChange.before}
                   after={question.codeChange.after}
                   onChange={setValue}
+                  onReady={() => markReady("proposal")}
                 />
               ) : (
                 <textarea
@@ -107,8 +144,8 @@ export function ExtensionDialog({ request }: { request: QuestionRequest }) {
                   className="min-h-24 rounded-md border border-hairline bg-surface p-3 text-sm text-fg outline-focus-ring"
                 />
               )}
-              <Button type="submit" disabled={busy} variant="primary">
-                Continue
+              <Button type="submit" disabled={busy || !diffsReady} variant="primary">
+                {question.plan ? "Approve plan" : question.codeChange ? "Apply change" : "Continue"}
               </Button>
             </form>
           )}

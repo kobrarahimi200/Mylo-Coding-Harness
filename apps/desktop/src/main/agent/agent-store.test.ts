@@ -96,8 +96,19 @@ it("discovers a CLI session in the configured native directory", async () => {
   ).toBe(true);
 });
 
+it("keeps deleted project records for archived history but does not offer them for selection", async () => {
+  const cwd = join(root, crypto.randomUUID());
+  mkdirSync(cwd);
+  const workspace = upsertWorkspace(cwd, false);
+  expect(listWorkspaces().some((item) => item.id === workspace.id)).toBe(true);
+  rmSync(cwd, { recursive: true });
+  expect(listWorkspaces().some((item) => item.id === workspace.id)).toBe(false);
+  expect(listWorkspaces(true).some((item) => item.id === workspace.id)).toBe(true);
+});
+
 it("discovers unregistered PI directories and updates their native titles without opening every session", async () => {
   const cwd = join(root, crypto.randomUUID());
+  mkdirSync(cwd);
   const external = SessionManager.create(cwd, join(root, "sessions"));
   external.appendMessage({ role: "user", content: "Unregistered project", timestamp: Date.now() });
   external.appendMessage(fauxAssistantMessage("Answer"));
@@ -245,4 +256,44 @@ it("restores the actual provider error instead of a legacy generic planning fail
   expect(
     readAgentHistory(id).events.findLast(({ event }) => event.type === "harness.phase")?.event,
   ).toMatchObject({ phase: "failed", detail: "Provider rejected request: no credits remaining" });
+});
+it("replays a harness validation failure even when the last model message completed normally", () => {
+  const { id, manager } = fixture();
+  manager.appendMessage({ role: "user", content: "Fix the test", timestamp: Date.now() });
+  manager.appendMessage(fauxAssistantMessage("Implementation finished"));
+  manager.appendCustomEntry("mylo.harness", {
+    type: "harness.phase",
+    sessionId: id,
+    phase: "failed",
+    detail: "Validation failed after three corrections",
+  });
+  expect(readAgentHistory(id).runs.at(-1)).toMatchObject({
+    status: "failed",
+    error: "Validation failed after three corrections",
+  });
+});
+
+it("restores structured plans without replaying raw planning JSON as chat", () => {
+  const { id, manager } = fixture();
+  const plan = { goal: "Create mylo-test.js", steps: ["Create the file"] };
+  manager.appendMessage({ role: "user", content: "Create it", timestamp: Date.now() });
+  manager.appendMessage(fauxAssistantMessage(JSON.stringify(plan)));
+  manager.appendCustomEntry("mylo.harness", {
+    type: "harness.plan",
+    sessionId: id,
+    plan,
+    approved: true,
+  });
+  manager.appendMessage(fauxAssistantMessage("All done"));
+  const { events } = readAgentHistory(id);
+  expect(
+    events.some(({ event }) => event.type === "message.delta" && event.delta.includes('"steps"')),
+  ).toBe(false);
+  expect(
+    events.some(({ event }) => event.type === "message.delta" && event.delta === "All done"),
+  ).toBe(true);
+  expect(events.findLast(({ event }) => event.type === "harness.plan")?.event).toMatchObject({
+    plan,
+    approved: true,
+  });
 });

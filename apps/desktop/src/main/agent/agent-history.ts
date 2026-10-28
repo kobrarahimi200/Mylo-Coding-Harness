@@ -4,9 +4,12 @@ import { type AgentEventItem, appendAgentEvents } from "../../shared/agent-event
 import type {
   AgentEvent,
   AgentRunInfo,
+  AgentRunStatus,
   PromptImageAttachment,
   SkillSelection,
 } from "../../shared/contracts";
+import { classifyFailure } from "../../shared/task-failure";
+import { isPlanJsonText } from "../../shared/task-plan-text";
 import { sessionManagerFor } from "./agent-store";
 import { toolResultContent } from "./pi-tool-result";
 
@@ -64,7 +67,18 @@ export function readAgentHistory(sessionId: string): {
           sessionId,
           runId: activeRun.id,
           message: activeRun.error ?? "Request failed",
+          failure: classifyFailure(activeRun.error ?? "Request failed"),
         },
+        activeRun.completedAt ?? activeRun.startedAt,
+      );
+    else if (activeRun.status === "awaiting_review")
+      emit(
+        { type: "run.awaiting_review", sessionId, runId: activeRun.id },
+        activeRun.completedAt ?? activeRun.startedAt,
+      );
+    else if (activeRun.status === "rejected")
+      emit(
+        { type: "run.rejected", sessionId, runId: activeRun.id, reason: "plan" },
         activeRun.completedAt ?? activeRun.startedAt,
       );
     else if (activeRun.status === "cancelled")
@@ -82,6 +96,15 @@ export function readAgentHistory(sessionId: string): {
   for (const entry of manager.getBranch()) {
     if (entry.type === "custom" && entry.customType === "mylo.harness") {
       const event = entry.data as AgentEvent;
+      if (
+        event.type === "harness.phase" &&
+        activeRun &&
+        ["failed", "cancelled", "completed", "awaiting_review", "rejected"].includes(event.phase)
+      ) {
+        activeRun.status = event.phase as AgentRunStatus;
+        activeRun.completedAt = entry.timestamp;
+        if (event.phase === "failed") activeRun.error ??= event.detail;
+      }
       // Older harness versions stored a generic planning failure. The native
       // assistant response retains the provider's actual cause; replay that cause.
       emit(
@@ -198,6 +221,8 @@ export function readAgentHistory(sessionId: string): {
       for (const [index, part] of message.content.entries()) {
         const messageId = `${entry.id}:${index}`;
         if (part.type === "text") {
+          // Planning JSON is internal; the structured harness.plan event renders it.
+          if (isPlanJsonText(part.text)) continue;
           emit(
             { type: "message.started", sessionId, messageId, role: "assistant" },
             entry.timestamp,

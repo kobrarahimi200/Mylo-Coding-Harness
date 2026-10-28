@@ -158,12 +158,39 @@ npm test
 cargo test --workspace
 npm run build
 npm --workspace @modus/desktop run test:smoke
+npm --workspace @modus/desktop run test:acceptance
 ```
 
 The Electron smoke runner uses temporary projects/preferences, checks empty
-startup and real PTY output, and launches a second process to verify restoration.
+startup and real PTY output, and launches a second process to verify restoration. On macOS it also verifies
+reopening a closed window without registering duplicate IPC handlers.
 Pi integration tests use deterministic provider responses; they do not validate
 an external provider's credentials or service availability.
+
+`test:acceptance` runs on macOS and launches an isolated Electron window with a
+minimal Vue + TypeScript project. A loopback model fixture drives the existing Pi
+engine through read-only exploration, editable plan approval, file diff approval,
+real failing npm tests, correction, passing tests/typecheck, and final acceptance.
+Only inference is mocked; the desktop UI, Pi tools, Vue compiler, TypeScript, and
+sandboxed subprocesses are real. Dependencies are copied from installed dev
+packages into the temporary workspace so tests need no downloads or credentials.
+
+Validation results distinguish **PASSED**, **FAILED**, **SKIPPED** (user choice),
+and **NOT CONFIGURED** (no supported scripts). Final review explicitly states
+whether validation passed; accepting a result does not turn skipped checks into
+successful checks.
+
+An additional opt-in macOS test uses your existing Pi sign-in and selected model
+to exercise real planning, editable file approval, an intentionally failing npm
+test, correction, and a passing rerun. It sends only a generated temporary fixture
+to the provider, isolates project/settings context, and does not copy credentials:
+
+```bash
+MYLO_LIVE_HARNESS=1 npx vitest run apps/desktop/src/main/agent/pi-sdk-runtime.live.test.ts
+```
+
+It defaults to `openai/gpt-6.1-sol`; set `MYLO_LIVE_MODEL=provider/model` to use
+another connected model. Normal `npm test` skips this network-dependent test.
 
 Build the Windows installer **on Windows** with Node.js, Rust, and Git installed:
 
@@ -180,4 +207,47 @@ The Windows workflow uploads `Mylo-Coding-Harness-*-Setup.exe`. Packaging checks
 for a Windows native PTY executable and never substitutes a macOS/Linux helper.
 Windows agent shell execution requires WSL, bubblewrap, bash, and the project's
 Linux toolchain. The interactive terminal uses the native Windows PTY helper.
+Before an agent command, Mylo checks the default WSL distribution's tools and
+actually creates an isolated namespace. Missing distributions, dependencies, or
+namespace permissions stop execution with setup instructions. It never runs the
+agent command in an unrestricted Windows shell. Windows paths are converted with
+`wslpath`; only the approved project is mounted at `/workspace`. Provider
+credentials, Windows drives, and the host network are not exposed to that sandbox.
+
+For the Windows sandbox, install WSL 2 and complete the default distro's first
+launch. On Ubuntu install `bubblewrap`, `util-linux`, and system-wide Linux
+Node.js/npm (under `/usr` or `/usr/local`), plus project dependencies. Projects
+using other Linux toolchains must provide them under `/usr`, `/usr/local`, or
+inside the approved project directory.
+The sandbox has no network access, so install dependencies before agent execution.
+Run the real isolation checks on a configured Windows machine with PowerShell:
+
+```powershell
+$env:MYLO_WSL_TESTS = "1"
+npx vitest run apps/desktop/src/main/harness/windows-sandbox.live.test.ts
+```
+
+The Windows workflow's optional `verify_wsl` input runs those checks on a
+self-hosted Windows x64 runner labeled `mylo-wsl2`. The normal hosted Windows job
+checks, builds, tests the native terminal, and packages the x64 installer. The
+optional WSL job requires that prepared runner; hosted packaging alone does not
+prove WSL isolation works. See [WSL commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands)
+and [Bubblewrap](https://github.com/containers/bubblewrap/blob/main/README.md).
 Local verification results and file inventory: [implementation report](docs/mylo-implementation-report.md).
+
+### Recovering a failed model connection
+
+If a task stops during planning, use **Connect / change provider** in the task's
+recovery panel. The original request, context, and attachments remain available
+for **Retry task**.
+
+For ChatGPT authentication, open **Settings → Model & Provider → OpenAI → Sign in
+with ChatGPT**, then complete the browser consent flow. Pi manages the credential
+and installation identity. Mylo fetches the signed-in account's model catalog;
+API models outside that catalog are not offered as ChatGPT choices. Select a
+listed model, use **Test connection**, then **Use model** to update the current
+session and default. Finding credentials alone does not prove a model request
+will succeed.
+
+The integration follows the [official model-list and inference contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
+Authentication does not silently fall back to the API-key billing path.

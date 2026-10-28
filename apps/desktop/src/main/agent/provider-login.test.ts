@@ -22,6 +22,7 @@ vi.mock("./model-service", () => ({
     login: mocks.login,
     refresh: mocks.refresh,
   }),
+  refreshChatGPTModelCatalog: async () => {},
   getModelSettings: () => ({ models: [], providers: [], errors: [] }),
 }));
 

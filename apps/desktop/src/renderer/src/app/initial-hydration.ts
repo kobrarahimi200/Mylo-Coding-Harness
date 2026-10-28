@@ -23,6 +23,22 @@ export type InitialAppHydration = {
   settled: Promise<void>;
 };
 
+export async function loadInitialWorkspaceState(hydration: InitialAppHydration) {
+  const [workspaces, sessions] = await Promise.allSettled([
+    hydration.workspaces,
+    hydration.sessions,
+  ]);
+  return {
+    workspaces: workspaces.status === "fulfilled" ? workspaces.value : [],
+    sessions: sessions.status === "fulfilled" ? sessions.value : [],
+    errors: [workspaces, sessions].flatMap((result, index) =>
+      result.status === "rejected"
+        ? [`Unable to load ${index === 0 ? "projects" : "sessions"}: ${String(result.reason)}`]
+        : [],
+    ),
+  };
+}
+
 /** Starts the independent first-screen reads together without coupling their failures. */
 export function beginInitialAppHydration(api: InitialAppDataSource): InitialAppHydration {
   const sessions = api.agent.list();

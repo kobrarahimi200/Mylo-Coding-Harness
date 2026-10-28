@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useStoredNumber } from "../../features/harness/useWorkspacePanels";
 
 export const SIDEBAR_MIN_WIDTH = 240;
 export const INSPECTOR_MIN_WIDTH = 320;
@@ -45,9 +46,9 @@ export function resolvePanelLayout({
   };
 }
 
-export function usePanelLayout(hasWorkspace: boolean) {
+export function usePanelLayout(hasWorkspace: boolean, reservedWidth = 0) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(240);
+  const [sidebarWidth, setSidebarWidth] = useStoredNumber("mylo.sidebar.width", 260, 240, 480);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorWidth, setInspectorWidth] = useState(384);
   const [layoutWidth, setLayoutWidth] = useState(0);
@@ -63,7 +64,7 @@ export function usePanelLayout(hasWorkspace: boolean) {
     return () => observer.disconnect();
   }, []);
   const requested = {
-    available: layoutWidth,
+    available: Math.max(0, layoutWidth - reservedWidth),
     sidebarOpen,
     sidebarWidth,
     inspectorOpen: hasWorkspace && inspectorOpen,

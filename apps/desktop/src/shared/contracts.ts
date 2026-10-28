@@ -24,7 +24,13 @@ export type AgentSessionInfo = {
   updatedAt: string;
 };
 
-export type AgentRunStatus = "running" | "completed" | "failed" | "cancelled";
+export type AgentRunStatus =
+  | "running"
+  | "awaiting_review"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "rejected";
 
 export type SessionDeletionResult = { method: "trash" | "unlink" };
 
@@ -68,9 +74,11 @@ export type AgentRunInfo = {
   prompt: string;
   status: AgentRunStatus;
   model?: string;
+  mode?: import("./harness").AgentMode;
   startedAt: string;
   completedAt?: string;
   error?: string;
+  failure?: import("./task-failure").TaskFailure;
 };
 
 export type QuestionOption = { label: string };
@@ -139,8 +147,18 @@ export type AgentEvent =
       runId: string;
       summary?: string;
     }
-  | { type: "run.failed"; sessionId: string; runId: string; message: string }
+  | {
+      type: "run.failed";
+      sessionId: string;
+      runId: string;
+      message: string;
+      failure?: import("./task-failure").TaskFailure;
+    }
   | { type: "run.cancelled"; sessionId: string; runId: string }
+  /** Work finished and the user kept the result for manual review; not a failure. */
+  | { type: "run.awaiting_review"; sessionId: string; runId: string; validation?: string }
+  /** The user declined a plan or result; nothing further ran. */
+  | { type: "run.rejected"; sessionId: string; runId: string; reason: "plan" | "review" }
   | {
       type: "retry.ended";
       sessionId: string;

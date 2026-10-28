@@ -1,3 +1,4 @@
+import type { CheckpointPreview, RollbackResult } from "../shared/checkpoint";
 import type {
   AgentEvent,
   AgentRunInfo,
@@ -33,6 +34,10 @@ import type {
 import type { StartupMetricInput } from "../shared/startup";
 
 export type ModusApi = {
+  harness: {
+    checkpoint(sessionId: string): Promise<CheckpointPreview>;
+    rollback(input: { sessionId: string; token: string; confirmed: true }): Promise<RollbackResult>;
+  };
   app: {
     version(): Promise<string>;
     startupMetric(input: StartupMetricInput): Promise<void>;
@@ -83,6 +88,7 @@ export type ModusApi = {
       message: string;
       paths?: string[];
       delivery?: PromptDelivery;
+      mode?: import("../shared/harness").AgentMode;
       userMessageId?: string;
       attachments?: PromptImageAttachment[];
       skills?: SkillSelection[];
@@ -167,7 +173,12 @@ export type ModusApi = {
   files: {
     list(input: { cwd: string; dir?: string }): Promise<FileEntry[]>;
     read(input: { cwd: string; path: string }): Promise<FileReadResult>;
-    write(input: { cwd: string; path: string; content: string }): Promise<FileWriteResult>;
+    write(input: {
+      cwd: string;
+      path: string;
+      content: string;
+      expectedContent?: string;
+    }): Promise<FileWriteResult>;
     /** Start live-watching the workspace root (ref-counted). Returns resolved root. */
     watch(cwd: string): Promise<string>;
     /** Stop live-watching (ref-counted). */
@@ -179,6 +190,7 @@ export type ModusApi = {
     read(input: { cwd: string; path: string }): Promise<PreviewReadResult>;
   };
   git: {
+    changes(cwd: string): Promise<Array<{ path: string; status: string }>>;
     branches(cwd: string): Promise<GitBranchSummary>;
     checkout(input: { cwd: string; name: string; remote?: boolean }): Promise<GitActionResult>;
     /** Start live-watching the repo containing cwd (ref-counted). */

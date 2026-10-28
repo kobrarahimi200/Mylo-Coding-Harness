@@ -4,7 +4,11 @@ import type {
   ModelSettingsState,
   WorkspaceInfo,
 } from "../../../shared/contracts";
-import { beginInitialAppHydration, type InitialAppHydration } from "./initial-hydration";
+import {
+  beginInitialAppHydration,
+  type InitialAppHydration,
+  loadInitialWorkspaceState,
+} from "./initial-hydration";
 import { reportRendererStartup } from "./startup-report";
 import { restoreWorkspaceSelection } from "./workspace-selection";
 
@@ -14,12 +18,14 @@ export function useInitialHydration({
   setAgentSessions,
   setActiveSessionId,
   applyModelSettings,
+  setSessionCreateError,
 }: {
   setWorkspaces(workspaces: WorkspaceInfo[]): void;
   setActiveWorkspace(workspace: WorkspaceInfo | null): void;
   setAgentSessions(sessions: AgentSessionInfo[]): void;
   setActiveSessionId(id: string | undefined): void;
   applyModelSettings(settings: ModelSettingsState): void;
+  setSessionCreateError(message: string | undefined): void;
 }) {
   const initialHydrationRef = useRef<InitialAppHydration | null>(null);
   useEffect(() => {
@@ -35,13 +41,17 @@ export function useInitialHydration({
           if (active) apply(value);
         })
         .catch((error: unknown) => {
-          if (active) console.error(`Unable to load initial ${resource}.`, error);
+          if (active) {
+            console.error(`Unable to load initial ${resource}.`, error);
+            setSessionCreateError(`Unable to load ${resource}: ${String(error)}`);
+          }
         });
     };
     load(
       "workspace and session state",
-      Promise.all([hydration.workspaces, hydration.sessions]),
-      ([items, sessions]) => {
+      loadInitialWorkspaceState(hydration),
+      ({ workspaces: items, sessions, errors }) => {
+        if (errors.length) setSessionCreateError(errors.join("\n"));
         setWorkspaces(items);
         setAgentSessions(sessions);
         const restored = restoreWorkspaceSelection(
@@ -61,5 +71,12 @@ export function useInitialHydration({
     return () => {
       active = false;
     };
-  }, [setWorkspaces, setActiveWorkspace, setAgentSessions, setActiveSessionId, applyModelSettings]);
+  }, [
+    setWorkspaces,
+    setActiveWorkspace,
+    setAgentSessions,
+    setActiveSessionId,
+    applyModelSettings,
+    setSessionCreateError,
+  ]);
 }

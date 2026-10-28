@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import type { FileEntry, FileReadResult, FileWriteResult } from "../../shared/contracts";
-import { resolveWithin } from "./path-within";
+import { resolveWorkspacePath } from "./path-within";
 
 /** Max bytes returned for a single file read; larger files are flagged + capped. */
 const MAX_READ_BYTES = 2 * 1024 * 1024;
@@ -29,7 +29,7 @@ const MAX_READ_BYTES = 2 * 1024 * 1024;
  * conventional explorer ordering. Unreadable entries are skipped, not fatal.
  */
 export function listDirectory(root: string, dir?: string): FileEntry[] {
-  const abs = dir ? resolveWithin(root, dir) : resolve(root);
+  const abs = resolveWorkspacePath(root, dir ?? ".");
   const entries: FileEntry[] = [];
   for (const dirent of readdirSync(abs, { withFileTypes: true })) {
     const childAbs = join(abs, dirent.name);
@@ -77,7 +77,7 @@ function looksBinary(buffer: Buffer): boolean {
 
 /** Read a workspace file as UTF-8 text, flagging binary and over-cap files. */
 export function readWorkspaceFile(root: string, path: string): FileReadResult {
-  const abs = resolveWithin(root, path);
+  const abs = resolveWorkspacePath(root, path);
   const stat = statSync(abs);
   if (stat.isDirectory()) {
     throw new Error("Path is a directory, not a file.");
@@ -101,8 +101,20 @@ export function readWorkspaceFile(root: string, path: string): FileReadResult {
  * Atomically write UTF-8 text into a workspace file. Refuses directories and
  * existing binary files (NUL-sniff) so a text editor cannot clobber them.
  */
-export function writeWorkspaceFile(root: string, path: string, content: string): FileWriteResult {
-  const abs = resolveWithin(root, path);
+export function writeWorkspaceFile(
+  root: string,
+  path: string,
+  content: string,
+  expectedContent?: string,
+): FileWriteResult {
+  const abs = resolveWorkspacePath(root, path);
+  if (
+    expectedContent !== undefined &&
+    (!existsSync(abs) || readFileSync(abs, "utf8") !== expectedContent)
+  )
+    throw new Error(
+      "This file changed on disk. Your draft was preserved; reload or merge before saving.",
+    );
   if (existsSync(abs)) {
     const stat = statSync(abs);
     if (stat.isDirectory()) {

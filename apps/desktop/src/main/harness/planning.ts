@@ -1,7 +1,9 @@
 import type { AgentEvent } from "../../shared/contracts";
-import type { TaskPlan } from "../../shared/harness";
+import type { AgentMode, TaskPlan } from "../../shared/harness";
+import { stripJsonFence } from "../../shared/task-plan-text";
 import { requestQuestions } from "../interaction/question-broker";
 import { auditHarnessEvent } from "./audit-log";
+import { TaskRejectedError } from "./task-lifecycle";
 
 export type { TaskPlan } from "../../shared/harness";
 
@@ -17,13 +19,17 @@ export async function approveTaskPlan(
   proposed: TaskPlan,
   sessionId: string,
   emit: (event: AgentEvent) => void,
+  mode: AgentMode = "agent",
 ): Promise<TaskPlan> {
   emit({ type: "harness.plan", sessionId, plan: proposed, approved: false });
   emit({
     type: "harness.phase",
     sessionId,
     phase: "approval",
-    detail: "Review the repository plan before execution.",
+    detail:
+      mode === "plan"
+        ? "Review the plan. No files will be changed in Plan mode."
+        : "Review the repository plan before execution.",
   });
   const edited = await requestQuestions({
     sessionId,
@@ -33,7 +39,9 @@ export async function approveTaskPlan(
         id: "task-plan",
         header: "Review and edit the task plan",
         detail:
-          "Review the goal and steps before Pi executes this task. Close the dialog to reject.",
+          mode === "plan"
+            ? "Edit the goal and steps, then approve to keep this plan. Nothing is executed in Plan mode. Close the dialog to reject."
+            : "Edit the goal and steps, then approve the plan to start execution. Close the dialog to reject.",
         prefill: JSON.stringify(proposed, null, 2),
         plan: proposed,
         options: [],
@@ -42,46 +50,27 @@ export async function approveTaskPlan(
   });
   if (edited.skipped) {
     await auditHarnessEvent({ type: "plan", sessionId, outcome: "rejected" });
-    throw new Error("Task plan rejected.");
+    throw new TaskRejectedError("plan", "Task plan rejected.");
   }
   const plan = parseTaskPlan(edited.answers[0]?.custom ?? "");
-  const decision = await requestQuestions({
-    sessionId,
-    emit,
-    questions: [
-      {
-        id: "approve-plan",
-        header: "Approve task execution?",
-        detail: `${plan.goal}\n\n${plan.steps.map((step, index) => `${index + 1}. ${step}`).join("\n")}`,
-        options: [{ label: "Approve plan" }, { label: "Reject" }],
-      },
-    ],
-  });
-  const approved = !decision.skipped && decision.answers[0]?.selected[0] === "Approve plan";
   await auditHarnessEvent({
     type: "plan",
     sessionId,
-    outcome: approved ? "approved" : "rejected",
+    outcome: "approved",
     detail: JSON.stringify(plan),
   });
-  if (!approved) throw new Error("Task plan rejected.");
   emit({ type: "harness.plan", sessionId, plan, approved: true });
   emit({
     type: "extension.notice",
     sessionId,
-    message: `Approved plan: ${JSON.stringify(plan)}`,
+    message: `Plan approved · ${plan.goal} · ${plan.steps.length} steps`,
     level: "info",
   });
   return plan;
 }
 
 export function parseTaskPlan(text: string): TaskPlan {
-  const plan: unknown = JSON.parse(
-    text
-      .trim()
-      .replace(/^```(?:json)?\s*/, "")
-      .replace(/\s*```$/, ""),
-  );
+  const plan: unknown = JSON.parse(stripJsonFence(text));
   if (
     !plan ||
     typeof plan !== "object" ||

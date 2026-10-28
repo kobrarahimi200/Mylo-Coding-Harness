@@ -3,7 +3,7 @@ import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import { type BrowserWindow, shell } from "electron";
 import type { ProviderAuthEvent } from "../../shared/provider-auth";
 import { createAgentSettings } from "./agent-settings";
-import { getModelRuntime, getModelSettings } from "./model-service";
+import { getModelRuntime, getModelSettings, refreshChatGPTModelCatalog } from "./model-service";
 
 type Login = {
   owner: number;
@@ -112,6 +112,7 @@ export async function loginProvider(
       providers: [provider],
       signal: login.controller.signal,
     });
+    await refreshChatGPTModelCatalog();
     return getModelSettings();
   } finally {
     clearTimeout(timeout);

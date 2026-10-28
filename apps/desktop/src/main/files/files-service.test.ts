@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -77,4 +77,28 @@ describe("workspace containment (authoritative safety check)", () => {
     expect(() => listDirectory(root, join(root, "..", ".."))).toThrow(/outside/);
     expect(() => writeWorkspaceFile(root, join(root, "..", "secret.txt"), "x")).toThrow(/outside/);
   });
+});
+
+it("refuses stale editor saves and keeps external changes intact", () => {
+  const path = join(root, "src", "app.ts");
+  writeFileSync(path, "external edit");
+  expect(() => writeWorkspaceFile(root, "src/app.ts", "draft", "original")).toThrow(
+    "draft was preserved",
+  );
+  expect(readFileSync(path, "utf8")).toBe("external edit");
+});
+
+it("blocks file IPC through a directory junction outside the workspace", () => {
+  const outside = mkdtempSync(join(tmpdir(), "mylo-outside-editor-"));
+  try {
+    writeFileSync(join(outside, "private.txt"), "outside");
+    symlinkSync(outside, join(root, "escape"), process.platform === "win32" ? "junction" : "dir");
+    expect(() => readWorkspaceFile(root, "escape/private.txt")).toThrow("outside the workspace");
+    expect(() => writeWorkspaceFile(root, "escape/private.txt", "clobber")).toThrow(
+      "outside the workspace",
+    );
+    expect(readFileSync(join(outside, "private.txt"), "utf8")).toBe("outside");
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
 });

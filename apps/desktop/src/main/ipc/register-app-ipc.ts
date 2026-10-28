@@ -13,11 +13,13 @@ import {
   shell,
 } from "electron";
 import { z } from "zod";
-import { listAgentEvents } from "../agent/agent-history";
-import { listAgentRuns } from "../agent/agent-run-store";
+import { listAgentEvents, releaseAgentView, seedAgentView } from "../agent/agent-history";
+import { getActiveAgentRun, listAgentRuns } from "../agent/agent-run-store";
 import {
   discoverAgentSessions,
+  getAgentSession,
   listAgentSessions,
+  sessionManagerFor,
   setAgentSessionPinned,
 } from "../agent/agent-store";
 import { previewEdits } from "../agent/file-preview";
@@ -61,8 +63,11 @@ import { listDirectory, readWorkspaceFile, writeWorkspaceFile } from "../files/f
 import { emitFilesEvent, unwatchWorkspace, watchWorkspace } from "../files/files-watcher";
 import { readImagePreview, readWorkspacePreview } from "../files/preview-kind";
 import { preparePromptImage } from "../files/prompt-image";
-import { checkoutBranch, listBranches } from "../git/git-service";
+import { runGit } from "../git/git-runner";
+import { checkoutBranch, isGitRepository, listBranches } from "../git/git-service";
+import { parseGitStatus } from "../git/git-status";
 import { emitGitEvent, unwatchRepo, watchRepo } from "../git/git-watcher";
+import { checkpointStore } from "../harness/checkpoints";
 import {
   denyPendingQuestionRequests,
   resolveQuestionRequest,
@@ -190,6 +195,58 @@ export function registerAppIpc({
 }: {
   startupTimeline?: StartupTimeline;
 } = {}): void {
+  ipcMain.handle("git:changes", async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const cwd = z.string().min(1).parse(input);
+    if (!(await isGitRepository(cwd))) return [];
+    const output = await runGit(cwd, [
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=normal",
+    ]);
+    return parseGitStatus(output);
+  });
+  const checkpointSession = (id: string) => {
+    const session = getAgentSession(id);
+    if (!session) throw new Error("Session not found.");
+    if (getActiveAgentRun(id))
+      throw new Error("Stop or finish the task before reviewing a rollback.");
+    return session;
+  };
+  ipcMain.handle(IPC_CHANNELS.checkpointPreview, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const id = sessionIdSchema.parse(input),
+      session = checkpointSession(id);
+    return checkpointStore().preview(id, session.cwd);
+  });
+  ipcMain.handle(IPC_CHANNELS.checkpointRestore, (event, input: unknown) => {
+    assertTrustedSender(event);
+    const parsed = z
+      .object({
+        sessionId: sessionIdSchema,
+        token: z.string().length(64),
+        confirmed: z.literal(true),
+      })
+      .parse(input);
+    const session = checkpointSession(parsed.sessionId);
+    const result = checkpointStore().restore(
+      parsed.sessionId,
+      session.cwd,
+      parsed.token,
+      parsed.confirmed,
+    );
+    const rollback = { type: "harness.rollback" as const, sessionId: parsed.sessionId, ...result };
+    sessionManagerFor(parsed.sessionId)?.appendCustomEntry("mylo.harness", rollback);
+    releaseAgentView(parsed.sessionId);
+    seedAgentView(parsed.sessionId);
+    event.sender.send(IPC_CHANNELS.agentEvent, rollback);
+    emitFilesEvent({
+      cwd: session.cwd,
+      paths: result.restored.map((path) => resolve(session.cwd, path)),
+    });
+    return result;
+  });
   ipcMain.handle("model:login", async (event, input) => {
     assertTrustedSender(event);
     getAgentRuntime().assertIdle();
@@ -383,6 +440,7 @@ export function registerAppIpc({
       message: parsed.message,
       paths: parsed.paths ?? [],
       ...(parsed.delivery !== undefined ? { delivery: parsed.delivery } : {}),
+      ...(parsed.mode !== undefined ? { mode: parsed.mode } : {}),
       ...(parsed.userMessageId !== undefined ? { userMessageId: parsed.userMessageId } : {}),
       ...(parsed.attachments !== undefined ? { attachments: parsed.attachments } : {}),
       ...(parsed.skills !== undefined ? { skills: parsed.skills } : {}),
@@ -663,7 +721,12 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.filesWrite, async (event, input) => {
     assertTrustedSender(event);
     const parsed = parseIpcInput(filesWriteSchema, input, IPC_CHANNELS.filesWrite);
-    const result = writeWorkspaceFile(parsed.cwd, parsed.path, parsed.content);
+    const result = writeWorkspaceFile(
+      parsed.cwd,
+      parsed.path,
+      parsed.content,
+      parsed.expectedContent,
+    );
     emitGitEvent({ cwd: parsed.cwd, kind: "working" });
     emitFilesEvent({ cwd: resolve(parsed.cwd), paths: [result.path] });
     return result;

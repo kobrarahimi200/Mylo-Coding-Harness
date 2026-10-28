@@ -8,7 +8,7 @@
   "type": "module",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev --watch",
+    "dev": "electron-vite dev",
     "build": "npm run build:pty && electron-vite build",
     "build:pty": "cargo build --release -p modus-pty-host",
     "preview": "electron-vite preview",
@@ -18,7 +18,8 @@
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --root ../.. apps/desktop/src",
-    "test:smoke": "node scripts/smoke-runner.mjs"
+    "test:smoke": "node scripts/smoke-runner.mjs",
+    "test:acceptance": "node scripts/acceptance-runner.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
@@ -30,7 +31,8 @@
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "vue": "^3.5.44"
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.2.4",

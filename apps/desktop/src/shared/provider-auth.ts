@@ -9,4 +9,10 @@ export type ProviderAuthEvent = { provider: string } & (
     }
   | { type: "notice"; message: string; url?: string }
 );
-export type ProviderConnectionResult = { ok: boolean; message: string };
+export type ProviderConnectionResult = {
+  ok: boolean;
+  message: string;
+  /** Present on failure: the classified failure category and a suggested recovery. */
+  category?: import("./task-failure").FailureCategory;
+  recovery?: string;
+};

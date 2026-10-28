@@ -5,6 +5,7 @@
 @import "./content.css";
 @import "./preview.css";
 @import "./harness.css";
+@import "./workspace.css";
 @source "../../../../../../node_modules/streamdown/dist/*.js";
 @source "../../../../../../node_modules/@streamdown/code/dist/*.js";
 @source "../../../../../../node_modules/@streamdown/cjk/dist/*.js";

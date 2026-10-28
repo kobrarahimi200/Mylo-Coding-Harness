@@ -7,9 +7,8 @@ import { IPC_CHANNELS } from "../ipc/channels";
 /**
  * Live workspace refresh for the Files panel. Watches a workspace root,
  * debounces filesystem bursts, and broadcasts `files:event` so the renderer
- * can refresh the tree and open buffer. Policy: when the open file changes on
- * disk (agent / external editor), disk wins — the renderer overwrites any
- * unsaved local draft.
+ * can refresh the tree and open buffer. The renderer refreshes clean buffers and preserves dirty drafts when a file
+ * changes on disk; guarded writes prevent silently overwriting external edits.
  */
 
 const DEBOUNCE_MS = 300;

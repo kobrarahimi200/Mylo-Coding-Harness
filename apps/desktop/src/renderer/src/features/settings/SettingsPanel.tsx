@@ -17,6 +17,8 @@ import { ProviderSettingsPanel } from "./ProviderSettingsPanel";
 import { SkillsSettingsPanel } from "./SkillsSettingsPanel";
 
 type SettingsPanelProps = {
+  activeSection: SettingsSectionId;
+  onSectionChange(section: SettingsSectionId): void;
   sessionId?: string | undefined;
   state: ModelSettingsState | null;
   onClose(): void;
@@ -24,7 +26,7 @@ type SettingsPanelProps = {
   workspaceCwd?: string | undefined;
 };
 
-type SettingsSectionId = "model-provider" | "appearance" | "skills" | "mcp";
+export type SettingsSectionId = "model-provider" | "appearance" | "skills" | "mcp";
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   id: SettingsSectionId;
   label: string;
@@ -41,13 +43,14 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 ];
 
 export function SettingsPanel({
+  activeSection,
+  onSectionChange,
   sessionId,
   state,
   onClose,
   onReloadConfiguration,
   workspaceCwd,
 }: SettingsPanelProps) {
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("model-provider");
   const [settingsQuery, setSettingsQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ message: string; error: boolean }>();
@@ -70,7 +73,7 @@ export function SettingsPanel({
         activeSection={activeSection}
         onBack={onClose}
         onQueryChange={setSettingsQuery}
-        onSectionChange={setActiveSection}
+        onSectionChange={onSectionChange}
         query={settingsQuery}
         busy={busy}
         feedback={feedback}

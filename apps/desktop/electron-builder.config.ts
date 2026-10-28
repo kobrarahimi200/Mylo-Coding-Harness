@@ -38,7 +38,7 @@ const config: Configuration = {
       { from: "../../target/release/modus-pty-host.exe", to: "bin/modus-pty-host.exe" },
     ],
     icon: "resources/icon.ico",
-    target: ["nsis"],
+    target: [{ target: "nsis", arch: ["x64"] }],
     signAndEditExecutable: false,
   },
   linux: {

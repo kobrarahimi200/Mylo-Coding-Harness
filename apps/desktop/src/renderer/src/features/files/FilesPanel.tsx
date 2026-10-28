@@ -34,8 +34,10 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { cn } from "../../lib/cn";
 import { MarkdownPreview } from "../preview/MarkdownPreview";
 import { PreviewHost } from "../preview/PreviewHost";
+import { canReloadBuffer, isDirty } from "./file-buffers";
 import { materialIconForEntry } from "./fileIcons";
 import { hasLiveFilesWatch } from "./hasLiveFilesWatch";
+import { useFileBuffers } from "./useFileBuffers";
 
 /**
  * VS-Code-style file panel: a lazy directory tree on the left, Monaco editor
@@ -50,6 +52,7 @@ import { hasLiveFilesWatch } from "./hasLiveFilesWatch";
  */
 
 type FilesPanelProps = {
+  cacheId?: string;
   cwd: string | undefined;
   onAddToChat?: ((item: ContextItem) => void) | undefined;
   /** Absolute or workspace-relative path to open (from chat file chips). */
@@ -97,32 +100,50 @@ function openFileAffected(openPath: string, changed: string[]): boolean {
   });
 }
 
-export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: FilesPanelProps) {
+export function FilesPanel({
+  cwd,
+  onAddToChat,
+  revealPath,
+  onRevealConsumed,
+  cacheId,
+}: FilesPanelProps) {
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const [childrenByPath, setChildrenByPath] = useState<Map<string, FileEntry[]>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState<Set<string>>(new Set());
-  const [selectedFile, setSelectedFile] = useState<FileReadResult | undefined>();
-  /** Disk snapshot after last successful read/write — dirty iff draft !== this. */
-  const [savedContent, setSavedContent] = useState<string | undefined>();
-  const [draftContent, setDraftContent] = useState<string | undefined>();
+  const {
+    buffers,
+    selectedFile,
+    setSelectedFile,
+    savedContent,
+    setSavedContent,
+    draftContent,
+    setDraftContent,
+    close,
+  } = useFileBuffers(cacheId);
+  const [markdownPreview, setMarkdownPreview] = useState(false);
   const [fileError, setFileError] = useState<string | undefined>();
   const [query, setQuery] = useState("");
   const [wordWrap, setWordWrap] = useState(false);
 
   // Tree width as a motion value (live drag writes straight to the DOM, no React
   // re-render per frame) + the committed width that the open animation targets.
-  const [treeOpen, setTreeOpen] = useState(true);
+  // The workspace already has its explorer in the sidebar. Keep the embedded
+  // tree available for the standalone inspector without duplicating it here.
+  const [treeOpen, setTreeOpen] = useState(!cacheId);
   const [treeWidth, setTreeWidth] = useState(DEFAULT_TREE_WIDTH);
-  const treeW = useMotionValue(DEFAULT_TREE_WIDTH);
+  const treeW = useMotionValue(cacheId ? 0 : DEFAULT_TREE_WIDTH);
   const dragRef = useRef<{ x: number; width: number } | null>(null);
   const latestWidthRef = useRef(DEFAULT_TREE_WIDTH);
   const selectedPathRef = useRef<string | undefined>(undefined);
   const childrenKeysRef = useRef<string[]>([]);
   const savedContentRef = useRef<string | undefined>(undefined);
+  const draftContentRef = useRef<string | undefined>(undefined);
+  const fileReadVersion = useRef(0);
   selectedPathRef.current = selectedFile?.path;
   childrenKeysRef.current = [...childrenByPath.keys()];
   savedContentRef.current = savedContent;
+  draftContentRef.current = draftContent;
 
   // Animate the column open/closed; never re-animate mid-drag (pointer owns it).
   useEffect(() => {
@@ -157,9 +178,9 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
     return () => {
       active = false;
     };
-  }, [cwd]);
+  }, [cwd, setSelectedFile, setSavedContent, setDraftContent]);
 
-  // Live workspace sync. Conflict policy: disk / AI wins — overwrite dirty drafts.
+  // External edits never overwrite unsaved user drafts.
   // Preload may lag renderer HMR (Electron must restart to refresh contextBridge).
   // Missing watch API must degrade to snapshot mode — never crash the shell.
   useEffect(() => {
@@ -240,12 +261,27 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
             ) {
               return;
             }
+            if (
+              !canReloadBuffer(
+                { file, saved: savedContentRef.current, draft: draftContentRef.current },
+                nextText,
+              )
+            ) {
+              setFileError(
+                "File changed on disk. Your unsaved draft is preserved. Reload or merge before saving.",
+              );
+              return;
+            }
             setSelectedFile(file);
             setSavedContent(nextText);
             setDraftContent(nextText);
             setFileError(undefined);
           } catch (error: unknown) {
             if (cancelled) {
+              return;
+            }
+            if (draftContentRef.current !== savedContentRef.current) {
+              setFileError(`File unavailable on disk. Your draft is preserved: ${String(error)}`);
               return;
             }
             setSelectedFile(undefined);
@@ -263,7 +299,7 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
       off();
       void filesApi.unwatch(cwd);
     };
-  }, [cwd]);
+  }, [cwd, setSelectedFile, setSavedContent, setDraftContent]);
 
   function startResize(event: PointerEvent<HTMLButtonElement>): void {
     event.preventDefault();
@@ -298,7 +334,7 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
   }
 
   const toggleDir = useCallback(
-    (entry: FileEntry) => {
+    (entry: Pick<FileEntry, "path">) => {
       setExpanded((current) => {
         const next = new Set(current);
         if (next.has(entry.path)) {
@@ -331,14 +367,22 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
   );
 
   const openFile = useCallback(
-    (entry: FileEntry) => {
+    (entry: Pick<FileEntry, "path">) => {
       if (!cwd) {
         return;
       }
       setFileError(undefined);
+      const cached = buffers[entry.path];
+      const request = ++fileReadVersion.current;
+      if (cached) {
+        setSelectedFile(cached.file);
+        if (isDirty(cached)) return;
+      }
       void window.modus.files
         .read({ cwd, path: entry.path })
         .then((file: FileReadResult) => {
+          if (request !== fileReadVersion.current) return;
+          if (cached && draftContentRef.current !== savedContentRef.current) return;
           setSelectedFile(file);
           setSavedContent(file.binary || file.truncated ? undefined : file.content);
           setDraftContent(file.binary || file.truncated ? undefined : file.content);
@@ -350,7 +394,7 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
           setFileError(error instanceof Error ? error.message : String(error));
         });
     },
-    [cwd],
+    [cwd, buffers, setSelectedFile, setSavedContent, setDraftContent],
   );
 
   // External reveal (chat file chip): expand ancestors + open the file.
@@ -377,9 +421,12 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
           setChildrenByPath((map) => new Map(map).set(dirAbs, entries));
           setExpanded((set) => new Set(set).add(dirAbs));
         }
-        setSelectedFile(file);
-        setSavedContent(file.binary || file.truncated ? undefined : file.content);
-        setDraftContent(file.binary || file.truncated ? undefined : file.content);
+        const cached = buffers[file.path];
+        setSelectedFile(cached?.file ?? file);
+        if (!cached) {
+          setSavedContent(file.binary || file.truncated ? undefined : file.content);
+          setDraftContent(file.binary || file.truncated ? undefined : file.content);
+        }
         setFileError(undefined);
       } catch (error: unknown) {
         if (!cancelled) {
@@ -394,7 +441,15 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
     return () => {
       cancelled = true;
     };
-  }, [cwd, revealPath, onRevealConsumed]);
+  }, [
+    cwd,
+    revealPath,
+    onRevealConsumed,
+    buffers,
+    setSelectedFile,
+    setSavedContent,
+    setDraftContent,
+  ]);
 
   const dirty =
     selectedFile !== undefined &&
@@ -413,6 +468,7 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
       cwd,
       path: selectedFile.path,
       content: draftContent,
+      ...(savedContent !== undefined ? { expectedContent: savedContent } : {}),
     });
     setSavedContent(draftContent);
     setSelectedFile({
@@ -422,7 +478,7 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
       truncated: false,
       binary: false,
     });
-  }, [cwd, draftContent, selectedFile]);
+  }, [cwd, draftContent, selectedFile, savedContent, setSavedContent, setSelectedFile]);
 
   // Flatten the expanded tree into the visible rows (DFS, dirs already sorted).
   const rows = useMemo<FlatNode[]>(() => {
@@ -455,6 +511,36 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="mylo-file-tabs" role="tablist" aria-label="Open files">
+        {Object.values(buffers).map((buffer) => (
+          <div className="mylo-file-tab" key={buffer.file.path}>
+            <button
+              role="tab"
+              aria-selected={selectedFile?.path === buffer.file.path}
+              title={buffer.file.relativePath}
+              type="button"
+              onClick={() => {
+                openFile({ path: buffer.file.path });
+              }}
+            >
+              {isDirty(buffer) ? "● " : ""}
+              {buffer.file.relativePath.split("/").at(-1)}
+            </button>
+            <button
+              type="button"
+              aria-label={`Close ${buffer.file.relativePath}`}
+              disabled={isDirty(buffer)}
+              title={isDirty(buffer) ? "Save this file before closing" : "Close file"}
+              onClick={() => close(buffer.file.path)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        {!Object.keys(buffers).length ? (
+          <span className="px-4 text-xs text-fg-faint">No open files</span>
+        ) : null}
+      </div>
       <div className="toolbar-row flex shrink-0 items-center gap-2 border-hairline border-b pr-1.5 pl-3">
         <FileBreadcrumb cwd={cwd} dirty={dirty} file={selectedFile} />
         {viewerNote ? <span className="shrink-0 text-2xs text-fg-faint">{viewerNote}</span> : null}
@@ -464,6 +550,48 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
           onToggleWordWrap={() => setWordWrap((value) => !value)}
           wordWrap={wordWrap}
         />
+        <button
+          type="button"
+          className="mylo-button"
+          disabled={!dirty}
+          onClick={() => void saveFile().catch((error: unknown) => setFileError(String(error)))}
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          className="mylo-button"
+          disabled={!selectedFile}
+          onClick={() => {
+            if (
+              !cwd ||
+              !selectedFile ||
+              (dirty &&
+                !window.confirm("Discard the unsaved draft and reload this file from disk?"))
+            )
+              return;
+            void window.modus.files
+              .read({ cwd, path: selectedFile.path })
+              .then((file) => {
+                setSelectedFile(file);
+                setSavedContent(file.binary || file.truncated ? undefined : file.content);
+                setDraftContent(file.binary || file.truncated ? undefined : file.content);
+                setFileError(undefined);
+              })
+              .catch((error: unknown) => setFileError(String(error)));
+          }}
+        >
+          Reload
+        </button>
+        {selectedFile && isMarkdown(selectedFile.path) ? (
+          <button
+            className="mylo-button"
+            type="button"
+            onClick={() => setMarkdownPreview((value) => !value)}
+          >
+            {markdownPreview ? "Edit source" : "Preview"}
+          </button>
+        ) : null}
         <Tooltip content={treeOpen ? "Hide file tree" : "Show file tree"} side="bottom">
           <button
             aria-label="Toggle file tree"
@@ -543,12 +671,22 @@ export function FilesPanel({ cwd, onAddToChat, revealPath, onRevealConsumed }: F
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {fileError ? (
+            <p role="alert" className="mylo-inline-error">
+              {fileError}
+            </p>
+          ) : null}
           <FileViewer
+            previewMarkdown={markdownPreview}
             cwd={cwd}
-            error={fileError}
-            file={selectedFile}
+            error={undefined}
+            file={
+              selectedFile
+                ? { ...selectedFile, content: draftContent ?? selectedFile.content }
+                : undefined
+            }
             onChange={setDraftContent}
-            onSave={() => void saveFile()}
+            onSave={() => void saveFile().catch((error: unknown) => setFileError(String(error)))}
             wordWrap={wordWrap}
             {...(onAddToChat ? { onAddToChat } : {})}
           />
@@ -770,6 +908,7 @@ function FileRow({
 }
 
 function FileViewer({
+  previewMarkdown,
   cwd,
   file,
   error,
@@ -778,6 +917,7 @@ function FileViewer({
   onSave,
   onAddToChat,
 }: {
+  previewMarkdown: boolean;
   cwd: string | undefined;
   file: FileReadResult | undefined;
   error: string | undefined;
@@ -804,7 +944,7 @@ function FileViewer({
     }
     return <PreviewHost cwd={cwd} path={file.path} />;
   }
-  if (isMarkdown(file.path)) {
+  if (isMarkdown(file.path) && previewMarkdown) {
     return <MarkdownPreview content={file.content} />;
   }
   // Truncated reads must stay read-only — saving would clobber the unread tail.

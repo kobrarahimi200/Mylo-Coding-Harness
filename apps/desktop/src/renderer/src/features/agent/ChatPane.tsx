@@ -8,6 +8,7 @@ import type {
   ModelInfo,
   PromptDelivery,
   PromptImageAttachment,
+  QuestionRequest,
   SkillSelection,
   WorkspaceInfo,
 } from "../../../../shared/contracts";
@@ -22,6 +23,10 @@ import {
   resolveDraftUpdate,
   restoreQueuedDraft,
 } from "../composer/composerDraft";
+import { useAgentMode } from "../composer/useAgentMode";
+import { ExecutionPlanCard } from "../harness/ExecutionPlanCard";
+import { usePlanApproval } from "../harness/plan-actions";
+import { planView } from "../harness/plan-view";
 import {
   type AgentEventHub,
   type AgentEventItem,
@@ -30,9 +35,9 @@ import {
   optimisticUserPromptEvents,
 } from "./agentEventHub";
 import { ConversationTimeline } from "./ConversationTimeline";
-import { failedTaskRecovery } from "./failedTaskRecovery";
+import { failedTaskRecovery, reviewOutcome } from "./failedTaskRecovery";
 import { latestSessionStatus } from "./runState";
-import { TaskRecoveryNotice } from "./TaskRecoveryNotice";
+import { TaskRecoveryNotice, TaskReviewNotice } from "./TaskRecoveryNotice";
 import { buildVisibleTimelineBlocks, Timeline } from "./Timeline";
 import { useAutoScroll } from "./useAutoScroll";
 
@@ -61,6 +66,10 @@ type ChatPaneProps = {
 
   /** Open a workspace file in the Files inspector panel. */
   onOpenFile?(path: string): void;
+  /** Pending harness plan approval for this session, if any. */
+  planQuestion?: QuestionRequest | undefined;
+  /** False when another surface (the Agent Workspace) already shows the plan. */
+  showPlan?: boolean;
 };
 
 export function ChatPane({
@@ -80,6 +89,8 @@ export function ChatPane({
   composerDraft,
   onComposerDraftChange,
   onOpenFile,
+  planQuestion,
+  showPlan = true,
 }: ChatPaneProps) {
   const sessionId = session.id;
   const [agentEvents, setAgentEvents] = useState<AgentEventItem[]>(initialEvents ?? []);
@@ -235,8 +246,28 @@ export function ChatPane({
   /* ── Conversation actions ──────────────────────────────────────────── */
 
   const paneModel = session.model ?? defaultModel;
+  const paneModelAvailable = models.some((entry) => entry.id === paneModel && entry.available);
   const recovery = useMemo(() => failedTaskRecovery(agentEvents), [agentEvents]);
+  const planCard = useMemo(
+    () => planView(agentEvents, planQuestion ? [planQuestion] : [], sessionId),
+    [agentEvents, planQuestion, sessionId],
+  );
+  const [replanRequest, setReplanRequest] = useState<string>();
+  const planApproval = usePlanApproval(
+    planQuestion,
+    (message) => setPromptError(message),
+    planCard?.request ? () => setReplanRequest(planCard.request) : undefined,
+  );
+  const outcome = useMemo(() => reviewOutcome(agentEvents), [agentEvents]);
+  const [agentMode, setAgentMode] = useAgentMode(sessionId);
   const activeCwd = session.cwd;
+
+  useEffect(() => {
+    if (replanRequest && !isRunning) {
+      setReplanRequest(undefined);
+      submitPrompt(replanRequest, []);
+    }
+  });
 
   function submitPrompt(
     message: string,
@@ -272,6 +303,7 @@ export function ChatPane({
       .prompt({
         paths,
         delivery,
+        mode: agentMode,
         sessionId,
         message,
         userMessageId,
@@ -343,9 +375,8 @@ export function ChatPane({
     <section className="flex h-full min-w-0 flex-1 flex-col">
       {recovery && !isRunning ? (
         <TaskRecoveryNotice
-          sessionId={sessionId}
           model={paneModel}
-          error={recovery.error}
+          failure={recovery.failure}
           busy={isRunning}
           onSettings={onOpenSettings}
           onRetry={() =>
@@ -358,6 +389,14 @@ export function ChatPane({
             )
           }
         />
+      ) : null}
+      {showPlan && planCard ? (
+        <div className="max-h-[45%] shrink-0 overflow-auto">
+          <ExecutionPlanCard view={planCard} approval={planApproval} />
+        </div>
+      ) : null}
+      {outcome && !isRunning ? (
+        <TaskReviewNotice kind={outcome.kind} reason={outcome.reason} />
       ) : null}
       {promptError ? (
         <div className="mx-4 mt-2 rounded-md border border-danger/30 bg-danger/8 px-3 py-2 text-xs text-danger">
@@ -413,11 +452,13 @@ export function ChatPane({
           {composerReplacement ?? (
             <Composer
               sessionId={sessionId}
-              canSubmit={Boolean(workspace) && Boolean(paneModel)}
+              canSubmit={Boolean(workspace) && paneModelAvailable}
               contextItems={contextItems}
               cwd={activeCwd}
               draft={activeComposerDraft}
               isRunning={isRunning}
+              mode={agentMode}
+              onModeChange={setAgentMode}
               model={paneModel}
               models={models}
               {...(contextUsage ? { contextUsage } : {})}

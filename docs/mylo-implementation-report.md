@@ -1,200 +1,222 @@
-# Mylo implementation and verification report
+# Mylo implementation and acceptance report
 
-Verified locally on macOS arm64, 2026-10-26 (Europe/Berlin).
+For the subsequent workspace redesign, updated **365-test** verification and
+current limitations, see [Mylo workspace redesign report](mylo-workspace-redesign-report.md).
+The results below describe the earlier stabilization milestone.
 
-## Crash diagnosis and startup behavior
+Verified locally on **macOS arm64, 2026-10-27 (Europe/Berlin)**.
+Branch: `fix/mylo-harness-acceptance-20261027`.
 
-The `.workspace` receiver in renderer code is the Electron preload API,
-`window.modus`, not the selected `WorkspaceInfo`. A null selected project is valid.
-The error shown in the request can be reproduced by calling the project-open
-handler without a preload bridge:
+Work uses the existing Modus application, Electron/preload bridge, native Pi
+sessions, tools, skills, resource loader and history. No second engine or new
+application was created. Changes already present at the beginning of this task
+were preserved. Nothing was committed, pushed, merged or published.
 
-```text
-Sidebar Open Project / Import project
-  → App.onOpenWorkspace
-  → useWorkspaceSessions.openWorkspace
-  → window.modus.workspace.open()
-  → TypeError: Cannot read properties of undefined (reading 'workspace')
-```
+## Root causes and corrections
 
-The handler catches that error and stores its message in `sessionCreateError`,
-which App renders. Initial hydration also depends on `api.workspace.list()`,
-although its existing effect already checks for a missing bridge. The original
-user's runtime stack was not provided; the path above is the source-traced
-reproduction, not a recovered production stack. The exception did not reproduce
-in the isolated Electron process with a working preload.
+1. **Workspace receiver:** the original `.workspace` exception refers to a missing
+   `window.modus` preload API, not to a valid null project selection. The original
+   production stack was not supplied. The source-traced reproduction is:
 
-The renderer now validates its desktop API before mounting workspace-dependent
-components. A browser-only renderer or failed preload shows an explicit desktop
-connection diagnostic, never an invented workspace API. The Electron window logs
-`preload-error` with the path and stack. The real Electron launch path, bundled
-preload, and clean installation were tested. No selected project shows Open
-Project, with project operations disabled. IPC session creation independently
-checks that the imported project exists and matches the requested working folder.
-The selected model now reaches the existing Pi runtime through IPC.
+   ```text
+   Sidebar Open Project / Import project
+     → App.onOpenWorkspace
+     → useWorkspaceSessions.openWorkspace
+     → window.modus.workspace.open()
+     → TypeError: Cannot read properties of undefined (reading 'workspace')
+   ```
 
-Session discovery finishes before the initial recent-project read. Saved project
-and session IDs are restored only if they still match an imported project.
-Removing a project leaves its files and chats on disk and prevents rediscovery
-from making it reappear until it is imported again.
+   Desktop bridge validation occurs before workspace components mount. A missing
+   preload shows a connection diagnostic; the Electron process logs preload
+   errors. A clean desktop startup shows Open Project with dependent actions
+   disabled. IPC independently verifies imported project/session boundaries.
 
-## Harness implementation
+2. **Partial startup failure:** `Promise.all` discarded usable project state when
+   session discovery failed, and the cause was only logged to the console.
+   Initial hydration now preserves independently successful data and surfaces
+   actual errors in the interface. Deleted project folders are excluded from
+   selectable recents; archived records remain available for history discovery.
 
-- The existing `PiSdkRuntime`, native Pi sessions, tools, resource loader,
-  extension system, and session history remain the agent engine.
-- Pi receives the request in a read-only planning phase. Only read/list/find/grep
-  tools are active, and the approval extension also blocks mutations during this
-  phase. Pi returns a structured repository-specific plan; there is no generic
-  fallback execution plan. Users can edit the goal and steps and reject execution.
-- Approved execution uses the existing Pi tools. Shell commands and file mutations
-  require individual approval. Unknown extension tools without a confinement
-  policy and isolation-sensitive commands fail closed.
-- Proposed code changes use editable Monaco diffs. Reviewed proposals, native edit
-  diffs, tool results, phases, plans, and validation events feed the interface.
-  Final acceptance includes reviewed file changes. Keeping a task for manual
-  review preserves approved edits rather than rolling files back.
-- Validation discovers npm test/lint/typecheck/check scripts and Cargo test/check
-  commands. It captures real output and exit codes. Vitest watch scripts receive
-  a one-shot flag. Missing, skipped, launch-failed, passed, and failed checks remain
-  distinct. Output is bounded and commands have a timeout.
-- Validation failures feed the same Pi session, with three corrections maximum
-  after the initial validation run. The tests verify four failing validation
-  runs exhaust this bound. Cancellation resolves pending approvals, aborts Pi,
-  and signals the validation subprocess group.
-- Harness events persist as custom entries in Pi's own session file and replay
-  into Plan, Timeline, Diff, Tests, and status views.
-- Skills use Pi's resource loader. Enable/disable preferences filter actual skills
-  and slash-command availability; this is not just a UI checkbox. Trusted folders
-  can be added, and README documents project `SKILL.md` files. Existing extensions
-  keep Pi's project trust flow. Stop a running task before changing skill resources.
-- The existing dark styling, Monaco, file explorer, chat, terminal, browser,
-  settings, and resizing infrastructure are retained. New workspace views and
-  output/status panels use live events and actual IPC operations. No activity or
-  successful validation is fabricated. The harness event listener does not consume
-  chat's prepared-event queue or retain every streamed token in another buffer.
+3. **Invisible restored conversation:** smoke diagnostics proved that saved
+   events and DOM text were intact, but the conversation wrapper was stuck at
+   `opacity: 0`. It now mounts visible (`initial={false}`). The smoke test checks
+   restored DOM content, geometry and opacity, rather than trusting body.innerText
+   for content-visibility:auto sections. Two complete post-fix smoke cycles passed.
 
-## Commands actually run
+4. **Approval depended on animation:** approval IPC was sent only from the dialog
+   closing-animation callback. It now sends immediately after the explicit user
+   action, with a synchronous duplicate-submission guard and actionable IPC errors.
+   Acceptance deliberately delays closing transitions for an hour; execution must
+   still advance. File acceptance is disabled until the actual Monaco diff is ready.
 
-| Command | Local result |
+5. **Monaco cancellation during disposal:** closing a diff before its asynchronous
+   computation settled produced an unhandled Canceled rejection. The supported
+   diff view-model API now waits before disposal. Initialization failures are
+   displayed; they are not globally filtered or suppressed.
+
+6. **Validation semantics/discovery:** missing scripts previously shared SKIPPED
+   with a user's explicit skip, and an independent check script was omitted when
+   lint/typecheck existed. Outcomes now distinguish PASSED, FAILED, SKIPPED and
+   NOT CONFIGURED. Final acceptance explicitly states when no validation passed.
+   Every configured npm test/lint/typecheck/check and supported Cargo test/check
+   command is retained. Actual stdout/stderr, exit codes and bounded logs persist.
+
+7. **Execution stability:** task locks cover planning through final review, blocking
+   competing normal prompts. Provider errors stop execution/correction before
+   additional validation attempts and retain the real cause. Correction remains
+   bounded to three retries after the first failed validation run.
+
+8. **Command execution:** macOS Node/npm could not lstat the `/opt` ancestor of
+   Homebrew executables. Only required ancestor metadata and shell-selection
+   reads were added. A real regression verifies external workspace files remain
+   unreadable. Windows now probes dependencies and actual namespace creation,
+   converts paths as argv, clears sandbox environment, and cancels the identified
+   Linux process group rather than merely terminating the Windows WSL client.
+
+9. **Approval path race:** a target directory could change into an escaping symlink
+   while a user reviewed a proposal. Write/edit paths are rechecked after approval
+   and at the final tool boundary. Both race cases have regression tests. Disallowed
+   sensitive commands remain blocked, with an accurate policy explanation.
+
+10. **Native terminal errors:** spawn failures and malformed sidecar output could
+    become unhandled main-process errors; late callbacks could affect a replacement
+    host. Errors now reach the terminal, affected sessions exit, and stale host
+    callbacks cannot reset the replacement.
+
+## Real workflow and acceptance evidence
+
+`test:acceptance` launches isolated real Electron/preload and imports a minimal
+Vue + TypeScript project through the Open Project UI. A loopback HTTP server
+provides **deterministic model responses only** to the existing Pi engine.
+No user credentials or private repositories are used.
+
+The test selects its configured fixture model, submits “Fix the failing unit
+test.” in the actual composer, performs read-only file exploration, waits for
+editable plan approval, reviews native writes, runs actual npm tests/typecheck,
+observes a deliberate assertion failure with exit 1, feeds it back through Pi,
+reviews the correction, observes passing checks with exit 0, and waits for explicit
+final acceptance. It then checks Diff and Tests panels and requires zero renderer
+errors. Slow closing-animation regression is included. Native integration tests
+separately hold final review, reject a destructive `rm -f` command, reject an
+editable proposal, cancel execution, and discover/disable/re-enable a custom skill.
+
+The fixture uses actual Vue reactivity, Vue SFC compilation and TypeScript.
+Dependencies are copied inside the approved temporary project; host node_modules
+symlinks would violate confinement. The deliberately broken source fixture remains
+broken in this repository; only temporary copies are corrected during acceptance.
+
+## Commands and results
+
+| Command | Verified result |
 | --- | --- |
-| `npm run check` | Passed; TypeScript passed. Biome reports 16 non-blocking warnings and 1 informational diagnostic. |
-| `npm test` | Passed: 61 files, 307 tests. Includes the actual Pi engine with a deterministic provider fixture, approval/rejection, file tools, skills, retries, cancellation, and provider-error preservation. |
-| `cargo test --workspace` | Passed: 4 Rust tests, including a spawned PTY process. |
-| `npm run build` | Passed: Rust release PTY helper and Electron main/preload/renderer build. |
-| `npm --workspace @modus/desktop run test:smoke` | Passed: real Electron/preload, empty startup, import, file save, rename, removal, actual PTY output, and project/session restoration in a second process. The folder chooser returns an isolated fixture directory. |
-| `npm --workspace @modus/desktop run package:win -- --x64 --publish never` | Failed as expected on this macOS host: no Windows native PTY executable. No Windows installer is claimed. |
-| `env -u ELECTRON_RUN_AS_NODE npm run dev` | Started the real Electron application; the inherited tool environment's Node-only flag must be removed for Electron GUI execution. |
+| `npm run check` | Passed; TypeScript passed. 16 non-blocking Biome warnings and 1 informational diagnostic remain. |
+| `npm run test` | Passed: **345 tests**, 66 files; **3 tests skipped** across 2 opt-in suites. |
+| `npm --workspace @modus/desktop run typecheck` | Passed without TypeScript suppression. |
+| `npm --workspace @modus/desktop run build` | Passed: Rust native PTY helper, Electron main/preload and renderer. |
+| `cargo test --workspace` | Passed: 4 Rust tests, including actual PTY output. |
+| `npm --workspace @modus/desktop run test:smoke` | Passed after the visibility fix; empty startup, import, save, remove, actual terminal output, process restart and macOS window reopening. Two complete consecutive cycles verified the diagnosed rendering regression. |
+| `npm --workspace @modus/desktop run test:acceptance` | Passed on the final build with actual Vue tests/typecheck, one correction, diff readiness, final review, deliberately stalled closing animations and zero renderer errors. Inference is deterministic; UI/tools/commands are real. |
+| `npm --workspace @modus/desktop run package:win -- --x64 --publish never` | **Failed at preflight on macOS:** no Windows-native PTY executable. No installer was produced or verified. |
 
-Playwright attached over CDP to an isolated real Electron window. It verified the
-empty state and disabled navigation, imported a fixture project, opened the
-Monaco editor, typed a change, saved with Cmd+S, and read the saved bytes back via
-IPC. Screenshot: `output/playwright/mylo-editor.png` (ignored local artifact).
+The three skipped tests are one credential-dependent live Pi/ChatGPT test and
+two real Windows/WSL integration tests. They are not counted as passes. Windows
+contracts/setup failures/quoting/cancellation are tested with mocked subprocesses.
+A prior native ChatGPT synthetic round trip passed on 2026-10-26 with exit codes
+1 → 0 and one correction; that live-model test was not rerun on 2026-10-27.
 
-## Requested scenario coverage
+During implementation the smoke test reproduced the opacity defect, and desktop
+acceptance reproduced approval stalls and Monaco cancellation. Those failures were
+investigated and the affected scenarios passed after correction. Intermediate
+formatting/type errors were fixed and checks rerun; they are not reported as passes.
 
-| Scenario | Evidence / limit |
+## Sandbox, Windows installer and remaining limits
+
+- No unrestricted host-shell fallback is used for agent commands. Windows requires
+  a configured default WSL 2 distribution, Bubblewrap/util-linux and system-visible
+  Linux toolchains. The interactive terminal remains the native user-operated PTY.
+- WSL commands mount only the approved project at `/workspace`, system toolchain
+  directories read-only, a private temporary filesystem and proc/dev. Networking
+  and other Windows drive mounts are not made available to project commands.
+  Provider credentials are not forwarded into the clean sandbox environment.
+- Cancellation uses a per-run identity and Linux process group. It does not shut
+  down a user's distribution or unrelated WSL processes. Missing dependencies,
+  failed isolation probes and cleanup failures are surfaced.
+- Native Pi file tools retain canonical path checks, including post-approval
+  rechecks. This is not a claim of a formal security audit against every possible
+  concurrent host-filesystem race. Unknown extension tools without a confinement
+  policy and disallowed sensitive commands stay blocked.
+- Dependency installation/network access must happen before confined execution.
+  Automatic validation discovery currently supports npm scripts and Cargo;
+  unconfigured ecosystems are explicitly NOT CONFIGURED rather than successful.
+- Windows x64 NSIS and target-specific PTY/runtime assets are configured. The hosted
+  workflow checks/builds/smokes/packages and uploads an installer only if produced.
+  Its optional verify_wsl job needs a prepared self-hosted Windows x64 runner
+  labeled mylo-wsl2. No such runner or Windows host was available in this session.
+- The local branch was not pushed, so the modified Windows workflow was not run
+  remotely. **Actual Windows sandbox behavior and installer generation remain
+  unverified.** No unverified native Windows isolation replacement was introduced.
+- 16 existing non-blocking lint warnings and one informational diagnostic remain.
+  No known failing local automated check remains after the corrections above.
+
+Design references: [Microsoft WSL commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands)
+and [Bubblewrap isolation model](https://github.com/containers/bubblewrap/blob/main/README.md).
+
+## Exact current changed-file inventory
+
+Includes accumulated changes already present when this task began, which were
+preserved. This is the current feature branch working-tree diff, not a commit.
+
+| File | Change |
 | --- | --- |
-| 1. Startup without a project | Electron smoke + Playwright + startup/selection regression tests. |
-| 2. Import a local project | Electron IPC and UI import; only the native chooser is supplied a fixture path. |
-| 3. Coding task generates a plan | Actual Pi session with deterministic model responses; read-only phase and structured output. External provider success is not claimed. |
-| 4. Approve plan, execute | Pi integration test writes a real fixture file after approval; rejection starts no tools. |
-| 5. File modification shows a diff | Pi write approval emits before/after data; editable Monaco diff and native edit diff views use actual events. Monaco file editing/saving was verified in Electron. |
-| 6. Actual test results | Real sandboxed commands produce output and exit codes 0 and 7; npm and Cargo suites also run locally. |
-| 7. Failing test triggers correction | Pi integration tests inject failing validation results, verify a correction through the same session, then success; another test exhausts all three retries. |
-| 8. Reject an unsafe command | Pi command rejection leaves a sentinel file absent; policy tests reject isolation-sensitive commands and escaped paths. |
-| 9. Add a custom skill | Real project `SKILL.md` discovery through Pi, disable/re-enable, and persisted preference assertions. Folder addition uses Pi settings and reload. |
-| 10. Restart preserves project/session | Two independent Electron processes restore the saved project and native Pi session; selection tests reject stale/mismatched IDs. |
+| [.github/workflows/windows.yml](../.github/workflows/windows.yml) | Hosted Windows build/test/package checks; optional prepared WSL runner job; job timeouts. |
+| [README.md](../README.md) | Usage, validation outcomes, Vue acceptance, opt-in live tests, WSL setup and installer instructions. |
+| [apps/desktop/electron-builder.config.ts](../apps/desktop/electron-builder.config.ts) | Explicit Windows x64 NSIS target; native helper and runtime asset configuration retained. |
+| [apps/desktop/package.json](../apps/desktop/package.json) | Vue development dependency and desktop acceptance command; existing development launch script retained. |
+| [apps/desktop/scripts/acceptance-runner.mjs](../apps/desktop/scripts/acceptance-runner.mjs) | Launch isolated macOS Electron acceptance with the correct GUI environment. |
+| [apps/desktop/scripts/acceptance.mjs](../apps/desktop/scripts/acceptance.mjs) | Loopback deterministic model plus full real desktop Vue/Pi correction workflow; stalled closing-animation regression. |
+| [apps/desktop/scripts/smoke-runner.mjs](../apps/desktop/scripts/smoke-runner.mjs) | Three isolated processes on macOS, including closed-window reopening. |
+| [apps/desktop/scripts/smoke.mjs](../apps/desktop/scripts/smoke.mjs) | Visible restored-turn assertions, rendering/history diagnostics, real PTY and import/restoration checks. |
+| [apps/desktop/scripts/vue-fixture.d.mts](../apps/desktop/scripts/vue-fixture.d.mts) | Type declaration for the fixture preparation helper. |
+| [apps/desktop/scripts/vue-fixture.mjs](../apps/desktop/scripts/vue-fixture.mjs) | Copy a fixture and its real Vue/TypeScript dependency closure inside its confined workspace. |
+| [apps/desktop/src/main/agent/agent-store.test.ts](../apps/desktop/src/main/agent/agent-store.test.ts) | Deleted-project selection/history regression; existing directory discovery fixture corrected. |
+| [apps/desktop/src/main/agent/model-service.test.ts](../apps/desktop/src/main/agent/model-service.test.ts) | Account catalog filtering, provider methods and connection-error regressions. |
+| [apps/desktop/src/main/agent/model-service.ts](../apps/desktop/src/main/agent/model-service.ts) | Account-specific model catalog, native provider connection tests and auth/model errors. |
+| [apps/desktop/src/main/agent/pi-sdk-runtime.live.test.ts](../apps/desktop/src/main/agent/pi-sdk-runtime.live.test.ts) | Opt-in real-model test using only isolated synthetic files and native Pi credentials. |
+| [apps/desktop/src/main/agent/pi-sdk-runtime.test.ts](../apps/desktop/src/main/agent/pi-sdk-runtime.test.ts) | Native Pi integration; real Vue/npm/typecheck correction, explicit final review, missing/skipped checks, rejected edits and rejected destructive commands. |
+| [apps/desktop/src/main/agent/pi-sdk-runtime.ts](../apps/desktop/src/main/agent/pi-sdk-runtime.ts) | Task locks, provider-error propagation, explicit validation outcomes and bounded corrections through the original Pi session. |
+| [apps/desktop/src/main/agent/provider-login.test.ts](../apps/desktop/src/main/agent/provider-login.test.ts) | Native sign-in identity regression. |
+| [apps/desktop/src/main/agent/provider-login.ts](../apps/desktop/src/main/agent/provider-login.ts) | Native Pi sign-in with persisted installation identity. |
+| [apps/desktop/src/main/harness/approval-path-race.test.ts](../apps/desktop/src/main/harness/approval-path-race.test.ts) | Block write/edit targets replaced by an escaping symlink while approval is pending. |
+| [apps/desktop/src/main/harness/approval-policy.test.ts](../apps/desktop/src/main/harness/approval-policy.test.ts) | Policy regressions; Windows-compatible directory junction fixture. |
+| [apps/desktop/src/main/harness/approval-policy.ts](../apps/desktop/src/main/harness/approval-policy.ts) | One editable approval per proposal, canonical path rechecks after approval and accurate sensitive-command policy errors. |
+| [apps/desktop/src/main/harness/planning.ts](../apps/desktop/src/main/harness/planning.ts) | Structured editable plan with one explicit approval before execution. |
+| [apps/desktop/src/main/harness/sandbox.test.ts](../apps/desktop/src/main/harness/sandbox.test.ts) | Isolation invocation, actual macOS timeout/cancellation and already-cancelled launch checks. |
+| [apps/desktop/src/main/harness/sandbox.ts](../apps/desktop/src/main/harness/sandbox.ts) | macOS executable-parent metadata fix, explicit timeout/cancellation and Windows isolation broker integration. |
+| [apps/desktop/src/main/harness/validation.test.ts](../apps/desktop/src/main/harness/validation.test.ts) | Discovery, independent check script, actual npm execution and denied external reads. |
+| [apps/desktop/src/main/harness/validation.ts](../apps/desktop/src/main/harness/validation.ts) | Retain independent check scripts alongside lint/typecheck; real command output and exit collection. |
+| [apps/desktop/src/main/harness/windows-sandbox.live.test.ts](../apps/desktop/src/main/harness/windows-sandbox.live.test.ts) | Opt-in real Windows/WSL path conversion, npm validation, mount confinement and descendant cancellation checks. |
+| [apps/desktop/src/main/harness/windows-sandbox.test.ts](../apps/desktop/src/main/harness/windows-sandbox.test.ts) | Mocked Windows subprocess contracts, missing dependencies, cancellation, secrets and hostile path quoting. |
+| [apps/desktop/src/main/harness/windows-sandbox.ts](../apps/desktop/src/main/harness/windows-sandbox.ts) | Real WSL dependency/namespace probe, argv-safe path conversion, clean environment, confined mounts and per-run Linux process-group cancellation. |
+| [apps/desktop/src/main/index.ts](../apps/desktop/src/main/index.ts) | Register IPC once and reopen closed macOS windows. |
+| [apps/desktop/src/main/terminal/terminal-service.test.ts](../apps/desktop/src/main/terminal/terminal-service.test.ts) | PTY launch errors, malformed host output and stale-host replacement regressions. |
+| [apps/desktop/src/main/terminal/terminal-service.ts](../apps/desktop/src/main/terminal/terminal-service.ts) | Handle native host launch/protocol errors; isolate callbacks from replaced hosts. |
+| [apps/desktop/src/main/workspace/workspace-store.ts](../apps/desktop/src/main/workspace/workspace-store.ts) | Omit deleted/moved project directories from selectable recents while retaining archived records. |
+| [apps/desktop/src/renderer/src/app/App.tsx](../apps/desktop/src/renderer/src/app/App.tsx) | Surface hydration errors; restored conversations start visible instead of depending on an opacity animation. |
+| [apps/desktop/src/renderer/src/app/initial-hydration.test.ts](../apps/desktop/src/renderer/src/app/initial-hydration.test.ts) | Project state survives a failed session discovery and reports its cause. |
+| [apps/desktop/src/renderer/src/app/initial-hydration.ts](../apps/desktop/src/renderer/src/app/initial-hydration.ts) | Recover project data independently of session-discovery failure and retain actionable errors. |
+| [apps/desktop/src/renderer/src/app/useInitialHydration.ts](../apps/desktop/src/renderer/src/app/useInitialHydration.ts) | Show initial project/session/model loading failures in the UI. |
+| [apps/desktop/src/renderer/src/components/code/CodeDiff.tsx](../apps/desktop/src/renderer/src/components/code/CodeDiff.tsx) | Loading/error states, readiness notification and safe Monaco view-model disposal after pending diff computation. |
+| [apps/desktop/src/renderer/src/features/agent/ChatPane.tsx](../apps/desktop/src/renderer/src/features/agent/ChatPane.tsx) | Retained native model selection and failed-task recovery integration. |
+| [apps/desktop/src/renderer/src/features/agent/ExtensionDialog.tsx](../apps/desktop/src/renderer/src/features/agent/ExtensionDialog.tsx) | Send approvals immediately, independent of closing animations; prevent duplicate submission and wait for review diffs to be ready. |
+| [apps/desktop/src/renderer/src/features/harness/HarnessPanels.tsx](../apps/desktop/src/renderer/src/features/harness/HarnessPanels.tsx) | Readable distinct validation status labels driven by actual harness events. |
+| [apps/desktop/src/shared/harness.ts](../apps/desktop/src/shared/harness.ts) | NOT CONFIGURED validation state and shared status labels. |
+| [apps/desktop/test-fixtures/vue-ts/.gitignore](../apps/desktop/test-fixtures/vue-ts/.gitignore) | Exclude generated test compilation and installed fixture dependencies. |
+| [apps/desktop/test-fixtures/vue-ts/package.json](../apps/desktop/test-fixtures/vue-ts/package.json) | Minimal real Vue/TypeScript fixture with test and typecheck scripts. |
+| [apps/desktop/test-fixtures/vue-ts/src/App.vue](../apps/desktop/test-fixtures/vue-ts/src/App.vue) | Compilable Vue component using the reactive counter. |
+| [apps/desktop/test-fixtures/vue-ts/src/counter.ts](../apps/desktop/test-fixtures/vue-ts/src/counter.ts) | Deliberately broken typed Vue counter for correction acceptance. |
+| [apps/desktop/test-fixtures/vue-ts/tests/counter.cjs](../apps/desktop/test-fixtures/vue-ts/tests/counter.cjs) | Actual failing/passing reactive-counter unit test and Vue SFC compilation check. |
+| [apps/desktop/test-fixtures/vue-ts/tsconfig.json](../apps/desktop/test-fixtures/vue-ts/tsconfig.json) | Fixture TypeScript checking configuration. |
+| [docs/mylo-implementation-report.md](../docs/mylo-implementation-report.md) | Verified results, root causes, security limits and complete current file inventory. |
+| [package-lock.json](../package-lock.json) | Locked Vue/compiler development dependency graph and required transitive packages. |
 
-## Remaining external limitations
-
-The running user's saved Pi assistant errors report: **You have no credits
-remaining.** That prevents live planning with the selected OpenAI model. Mylo now
-preserves and displays the underlying provider error instead of replacing it with
-"could not generate a task plan." Fixing provider balance/credentials or selecting
-another working provider is outside a repository code change. No account settings
-or credentials were changed. Live external model completion has not been claimed.
-
-Windows packaging is prepared with a target-specific native helper, an executable
-preflight, NSIS settings, and a Windows CI build/test/smoke/package workflow.
-That workflow was edited locally, not executed or published here. Windows agent
-shell execution still requires WSL + bubblewrap and a Linux project toolchain;
-its interactive terminal uses the native Windows PTY helper. No signing or
-Windows installation test was performed.
-
-The source tree already contained uncommitted modifications when this request
-started. They were preserved. The inventory below is the complete final working
-tree delta against HEAD, including carried-over files, so it does not attribute
-all prior changes to this request. Generated build files, logs, screenshots, and
-Playwright snapshots are ignored and are not source changes.
-
-## Complete changed-file inventory
-
-| File | Role |
-| --- | --- |
-| [`.gitignore`](../.gitignore) | Ignore local Playwright evidence and output artifacts. |
-| [`README.md`](../README.md) | Mylo workflow, custom skill instructions, verification, and Windows build documentation. |
-| [`apps/desktop/electron-builder.config.ts`](../apps/desktop/electron-builder.config.ts) | Mylo installer metadata and target-specific native terminal resources. |
-| [`apps/desktop/package.json`](../apps/desktop/package.json) | Smoke-test runner and Windows native-binary preflight scripts; existing dependencies retained. |
-| [`apps/desktop/src/main/agent/agent-history.ts`](../apps/desktop/src/main/agent/agent-history.ts) | Replay persisted harness custom entries from native Pi history. |
-| [`apps/desktop/src/main/agent/agent-resources.test.ts`](../apps/desktop/src/main/agent/agent-resources.test.ts) | Resource-discovery fixture preferences for skill filtering. |
-| [`apps/desktop/src/main/agent/agent-resources.ts`](../apps/desktop/src/main/agent/agent-resources.ts) | Filter enabled skills through Pi resource discovery. |
-| [`apps/desktop/src/main/agent/agent-store.test.ts`](../apps/desktop/src/main/agent/agent-store.test.ts) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/main/agent/agent-store.ts`](../apps/desktop/src/main/agent/agent-store.ts) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/main/agent/pi-sdk-runtime.test.ts`](../apps/desktop/src/main/agent/pi-sdk-runtime.test.ts) | Native Pi workflow, mutations, rejection, retry limit, skills, cancellation, and provider-error regressions. |
-| [`apps/desktop/src/main/agent/pi-sdk-runtime.ts`](../apps/desktop/src/main/agent/pi-sdk-runtime.ts) | Read-only Pi planning, approvals, validation/correction, cancellation, diffs, and provider errors. |
-| [`apps/desktop/src/main/git/git-repo.test.ts`](../apps/desktop/src/main/git/git-repo.test.ts) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/main/git/git-service.test.ts`](../apps/desktop/src/main/git/git-service.test.ts) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/main/interaction/question-broker.test.ts`](../apps/desktop/src/main/interaction/question-broker.test.ts) | Synchronous-response regression alongside existing question tests. |
-| [`apps/desktop/src/main/interaction/question-broker.ts`](../apps/desktop/src/main/interaction/question-broker.ts) | Register approval requests before emitting them to avoid losing immediate responses. |
-| [`apps/desktop/src/main/ipc/register-app-ipc.ts`](../apps/desktop/src/main/ipc/register-app-ipc.ts) | Validate project/session creation and selected model; expose skill enable/disable. |
-| [`apps/desktop/src/main/preferences/desktop-preferences.ts`](../apps/desktop/src/main/preferences/desktop-preferences.ts) | Skill preferences and defaults for older preference files; hidden projects retained. |
-| [`apps/desktop/src/main/skills/skills-service.ts`](../apps/desktop/src/main/skills/skills-service.ts) | List, enable/disable, reload, and manage trusted skill folders. |
-| [`apps/desktop/src/main/windows/main-window.ts`](../apps/desktop/src/main/windows/main-window.ts) | Mylo window title and preload-error diagnostics. |
-| [`apps/desktop/src/main/workspace/workspace-store.ts`](../apps/desktop/src/main/workspace/workspace-store.ts) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/preload/index.ts`](../apps/desktop/src/preload/index.ts) | Expose typed skill enable/disable IPC; retain existing bridge. |
-| [`apps/desktop/src/preload/types.ts`](../apps/desktop/src/preload/types.ts) | Typed API for skill manager and existing desktop operations. |
-| [`apps/desktop/src/renderer/index.html`](../apps/desktop/src/renderer/index.html) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/renderer/src/app/App.tsx`](../apps/desktop/src/renderer/src/app/App.tsx) | Functional workspace tabs, empty state, output panel, and agent status integration. |
-| [`apps/desktop/src/renderer/src/app/WorkspaceHeaderActions.tsx`](../apps/desktop/src/renderer/src/app/WorkspaceHeaderActions.tsx) | Disable project-dependent header controls without a project. |
-| [`apps/desktop/src/renderer/src/app/initial-hydration.test.ts`](../apps/desktop/src/renderer/src/app/initial-hydration.test.ts) | Startup dependency ordering and empty result regressions. |
-| [`apps/desktop/src/renderer/src/app/initial-hydration.ts`](../apps/desktop/src/renderer/src/app/initial-hydration.ts) | Read recents after native session discovery. |
-| [`apps/desktop/src/renderer/src/app/useInitialHydration.ts`](../apps/desktop/src/renderer/src/app/useInitialHydration.ts) | Restore matched workspace/session selections. |
-| [`apps/desktop/src/renderer/src/app/useWorkspaceSessions.ts`](../apps/desktop/src/renderer/src/app/useWorkspaceSessions.ts) | Validate selections, preserve selection IDs, display project-operation errors. |
-| [`apps/desktop/src/renderer/src/components/Sidebar.tsx`](../apps/desktop/src/renderer/src/components/Sidebar.tsx) | Project selection and visible import/edit/remove actions; Mylo label. |
-| [`apps/desktop/src/renderer/src/components/layout/NavigationRail.tsx`](../apps/desktop/src/renderer/src/components/layout/NavigationRail.tsx) | Projects, files, skills, tests, history, and settings navigation. |
-| [`apps/desktop/src/renderer/src/components/ui/WindowTitleBar.tsx`](../apps/desktop/src/renderer/src/components/ui/WindowTitleBar.tsx) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/renderer/src/features/agent/ExtensionDialog.tsx`](../apps/desktop/src/renderer/src/features/agent/ExtensionDialog.tsx) | Editable plan fields, code diff review, and final acceptance diffs. |
-| [`apps/desktop/src/renderer/src/features/composer/Composer.tsx`](../apps/desktop/src/renderer/src/features/composer/Composer.tsx) | Block file attachment/drop operations without a project. |
-| [`apps/desktop/src/renderer/src/features/settings/SkillsSettingsPanel.tsx`](../apps/desktop/src/renderer/src/features/settings/SkillsSettingsPanel.tsx) | Real skill toggles and trusted folder management. |
-| [`apps/desktop/src/renderer/src/main.tsx`](../apps/desktop/src/renderer/src/main.tsx) | Validate desktop bridge before mounting workspace-dependent components. |
-| [`apps/desktop/src/renderer/src/styles/app.css`](../apps/desktop/src/renderer/src/styles/app.css) | Load harness styles through the existing CSS pipeline. |
-| [`apps/desktop/src/shared/contracts.ts`](../apps/desktop/src/shared/contracts.ts) | Typed plan/diff approval data, harness events, and skill state. |
-| [`package-lock.json`](../package-lock.json) | Pre-existing dependency lockfile changes preserved. |
-| [`.github/workflows/windows.yml`](../.github/workflows/windows.yml) | Windows build, regression, Electron smoke, NSIS packaging, and artifact workflow. |
-| [`apps/desktop/scripts/check-windows-package.mjs`](../apps/desktop/scripts/check-windows-package.mjs) | Reject Windows packaging without a genuine Windows native helper. |
-| [`apps/desktop/scripts/smoke-runner.mjs`](../apps/desktop/scripts/smoke-runner.mjs) | Launch two isolated Electron processes and clean their shared temporary state. |
-| [`apps/desktop/scripts/smoke.mjs`](../apps/desktop/scripts/smoke.mjs) | Real Electron startup, project/terminal operations, and session restoration fixtures. |
-| [`apps/desktop/src/main/harness/approval-policy.test.ts`](../apps/desktop/src/main/harness/approval-policy.test.ts) | Retained harness audit, confinement, or bounded-retry module/test from the initial working tree. |
-| [`apps/desktop/src/main/harness/approval-policy.ts`](../apps/desktop/src/main/harness/approval-policy.ts) | Read-only planning, scoped tool approvals, and proposed change snapshots. |
-| [`apps/desktop/src/main/harness/audit-log.ts`](../apps/desktop/src/main/harness/audit-log.ts) | Retained harness audit, confinement, or bounded-retry module/test from the initial working tree. |
-| [`apps/desktop/src/main/harness/planning.test.ts`](../apps/desktop/src/main/harness/planning.test.ts) | Generated-plan parsing and normalization regressions. |
-| [`apps/desktop/src/main/harness/planning.ts`](../apps/desktop/src/main/harness/planning.ts) | Parse and normalize Pi-generated plans; editable approval workflow. |
-| [`apps/desktop/src/main/harness/retry-policy.test.ts`](../apps/desktop/src/main/harness/retry-policy.test.ts) | Retained harness audit, confinement, or bounded-retry module/test from the initial working tree. |
-| [`apps/desktop/src/main/harness/retry-policy.ts`](../apps/desktop/src/main/harness/retry-policy.ts) | Retained harness audit, confinement, or bounded-retry module/test from the initial working tree. |
-| [`apps/desktop/src/main/harness/sandbox.test.ts`](../apps/desktop/src/main/harness/sandbox.test.ts) | Retained harness audit, confinement, or bounded-retry module/test from the initial working tree. |
-| [`apps/desktop/src/main/harness/sandbox.ts`](../apps/desktop/src/main/harness/sandbox.ts) | OS-isolated command execution and cancellation; CI environment for checks. |
-| [`apps/desktop/src/main/harness/validation.test.ts`](../apps/desktop/src/main/harness/validation.test.ts) | Discovery, launch failure, actual sandboxed exit/output regressions. |
-| [`apps/desktop/src/main/harness/validation.ts`](../apps/desktop/src/main/harness/validation.ts) | Discover and execute project checks with output, exit codes, timeout, and abort signal. |
-| [`apps/desktop/src/main/skills/skill-preferences.ts`](../apps/desktop/src/main/skills/skill-preferences.ts) | Persisted skill filtering and disabled-skill catalog. |
-| [`apps/desktop/src/renderer/src/app/desktop-bridge.test.ts`](../apps/desktop/src/renderer/src/app/desktop-bridge.test.ts) | Preload API validation or missing-bridge regression coverage. |
-| [`apps/desktop/src/renderer/src/app/desktop-bridge.ts`](../apps/desktop/src/renderer/src/app/desktop-bridge.ts) | Preload API validation or missing-bridge regression coverage. |
-| [`apps/desktop/src/renderer/src/app/workspace-selection.test.ts`](../apps/desktop/src/renderer/src/app/workspace-selection.test.ts) | Pure validated selection restoration or empty/stale-state regression coverage. |
-| [`apps/desktop/src/renderer/src/app/workspace-selection.ts`](../apps/desktop/src/renderer/src/app/workspace-selection.ts) | Pure validated selection restoration or empty/stale-state regression coverage. |
-| [`apps/desktop/src/renderer/src/components/code/CodeDiff.tsx`](../apps/desktop/src/renderer/src/components/code/CodeDiff.tsx) | Editable Monaco diff editor with model/subscription disposal. |
-| [`apps/desktop/src/renderer/src/features/calculator/Calculator.tsx`](../apps/desktop/src/renderer/src/features/calculator/Calculator.tsx) | Carried-over working-tree change preserved (including project recents, platform Git tests, branding, or calculator support). |
-| [`apps/desktop/src/renderer/src/features/harness/BottomPanel.tsx`](../apps/desktop/src/renderer/src/features/harness/BottomPanel.tsx) | Real terminal, validation, log, and problem views with output resizing. |
-| [`apps/desktop/src/renderer/src/features/harness/HarnessPanels.tsx`](../apps/desktop/src/renderer/src/features/harness/HarnessPanels.tsx) | Plan, timeline, validation, native/proposed diff, status, and approval views. |
-| [`apps/desktop/src/renderer/src/features/harness/useHarnessEvents.ts`](../apps/desktop/src/renderer/src/features/harness/useHarnessEvents.ts) | Load and stream harness events without consuming chat preparation buffers. |
-| [`apps/desktop/src/renderer/src/styles/harness.css`](../apps/desktop/src/renderer/src/styles/harness.css) | Dark workspace tabs, status panel, and resizable output panel. |
-| [`apps/desktop/src/shared/harness.ts`](../apps/desktop/src/shared/harness.ts) | Shared harness phases, plans, validation, and change-event contracts. |
-| [`docs/mylo-implementation-report.md`](../docs/mylo-implementation-report.md) | This diagnosis, evidence, limits, and full file inventory. |
+Total: **50 files**. No push or merge was performed.

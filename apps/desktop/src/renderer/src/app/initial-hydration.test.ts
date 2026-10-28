@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { beginInitialAppHydration, type InitialAppDataSource } from "./initial-hydration";
+import {
+  beginInitialAppHydration,
+  type InitialAppDataSource,
+  loadInitialWorkspaceState,
+} from "./initial-hydration";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -21,6 +25,21 @@ function deferred<T>(): Deferred<T> {
 }
 
 describe("beginInitialAppHydration", () => {
+  it("preserves projects and reports session-discovery failure", async () => {
+    const source = {
+      workspace: { list: async () => [{ id: "project", rootPath: "/fixture" }] },
+      agent: {
+        list: async () => {
+          throw new Error("Unreadable session file");
+        },
+      },
+      model: { settings: async () => ({ models: [], providers: [], errors: [] }) },
+    } as unknown as InitialAppDataSource;
+    const state = await loadInitialWorkspaceState(beginInitialAppHydration(source));
+    expect(state.workspaces).toHaveLength(1);
+    expect(state.sessions).toEqual([]);
+    expect(state.errors).toEqual(["Unable to load sessions: Error: Unreadable session file"]);
+  });
   it("starts every independent read once and settles after every result completes", async () => {
     const workspaces = deferred<[]>();
     const sessions = deferred<[]>();

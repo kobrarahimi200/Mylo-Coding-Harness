@@ -10,6 +10,10 @@ import type {
 import type { ModusApi } from "./types";
 
 const api: ModusApi = {
+  harness: {
+    checkpoint: (sessionId) => ipcRenderer.invoke("harness:checkpoint-preview", sessionId),
+    rollback: (input) => ipcRenderer.invoke("harness:checkpoint-restore", input),
+  },
   app: {
     reloadConfiguration: () => ipcRenderer.invoke("app:reload-configuration"),
     version: () => ipcRenderer.invoke("app:version") as Promise<string>,
@@ -116,6 +120,7 @@ const api: ModusApi = {
     read: (input) => ipcRenderer.invoke("preview:read", input),
   },
   git: {
+    changes: (cwd) => ipcRenderer.invoke("git:changes", cwd),
     branches: (cwd) => ipcRenderer.invoke("git:branches", cwd),
     checkout: (input) => ipcRenderer.invoke("git:checkout", input),
     watch: (cwd) => ipcRenderer.invoke("git:watch", cwd),
