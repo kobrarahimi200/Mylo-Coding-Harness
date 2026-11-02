@@ -26,6 +26,7 @@
 }
 
 .dialog-backdrop {
+  backdrop-filter: blur(3px);
   transition: opacity 140ms ease-out;
 }
 
@@ -134,9 +135,9 @@ body {
     height: min(600px, 80dvh);
     transform: translate(-50%, -50%);
     overflow: hidden;
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
-    background: var(--color-panel);
+    border: 1px solid var(--color-popup-border);
+    border-radius: var(--radius-xl);
+    background: var(--color-surface);
     color: var(--color-fg);
     box-shadow: var(--shadow-popup);
     outline: none;

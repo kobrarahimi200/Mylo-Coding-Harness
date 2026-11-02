@@ -24,3 +24,15 @@ describe("classifyFailure", () => {
     expect(redactSecrets("Bearer abcdefghijklmnop12345")).not.toContain("abcdefghijklmnop12345");
   });
 });
+
+describe("isLegacyManualReview", () => {
+  it("recognises only the legacy manual-review message", async () => {
+    const { isLegacyManualReview } = await import("./task-failure");
+    expect(isLegacyManualReview("Task left for manual review; file changes were preserved.")).toBe(
+      true,
+    );
+    expect(isLegacyManualReview("  task left for manual review")).toBe(true);
+    expect(isLegacyManualReview("401 invalid api key")).toBe(false);
+    expect(isLegacyManualReview(undefined)).toBe(false);
+  });
+});

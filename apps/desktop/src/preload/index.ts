@@ -174,6 +174,10 @@ const api: ModusApi = {
     addFolder: (id) => ipcRenderer.invoke("skills:add-folder", id),
     removeFolder: (input) => ipcRenderer.invoke("skills:remove-folder", input),
     list: (sessionId) => ipcRenderer.invoke("skills:list", sessionId),
+    read: (input) => ipcRenderer.invoke("skills:read", input),
+    create: (input) => ipcRenderer.invoke("skills:create", input),
+    update: (input) => ipcRenderer.invoke("skills:update", input),
+    delete: (input) => ipcRenderer.invoke("skills:delete", input),
     onChanged: (callback) => {
       const listener = (_event: IpcRendererEvent, cwd: string) => callback(cwd);
       ipcRenderer.on("resources:changed", listener);

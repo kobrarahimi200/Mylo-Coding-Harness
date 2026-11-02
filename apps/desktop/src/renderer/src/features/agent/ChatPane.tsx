@@ -25,7 +25,7 @@ import {
 } from "../composer/composerDraft";
 import { useAgentMode } from "../composer/useAgentMode";
 import { ExecutionPlanCard } from "../harness/ExecutionPlanCard";
-import { usePlanApproval } from "../harness/plan-actions";
+import { PlanReview } from "../harness/PlanReview";
 import { planView } from "../harness/plan-view";
 import {
   type AgentEventHub,
@@ -252,22 +252,9 @@ export function ChatPane({
     () => planView(agentEvents, planQuestion ? [planQuestion] : [], sessionId),
     [agentEvents, planQuestion, sessionId],
   );
-  const [replanRequest, setReplanRequest] = useState<string>();
-  const planApproval = usePlanApproval(
-    planQuestion,
-    (message) => setPromptError(message),
-    planCard?.request ? () => setReplanRequest(planCard.request) : undefined,
-  );
   const outcome = useMemo(() => reviewOutcome(agentEvents), [agentEvents]);
   const [agentMode, setAgentMode] = useAgentMode(sessionId);
   const activeCwd = session.cwd;
-
-  useEffect(() => {
-    if (replanRequest && !isRunning) {
-      setReplanRequest(undefined);
-      submitPrompt(replanRequest, []);
-    }
-  });
 
   function submitPrompt(
     message: string,
@@ -392,7 +379,7 @@ export function ChatPane({
       ) : null}
       {showPlan && planCard ? (
         <div className="max-h-[45%] shrink-0 overflow-auto">
-          <ExecutionPlanCard view={planCard} approval={planApproval} />
+          <PlanReview view={planCard} request={planQuestion} onError={setPromptError} />
         </div>
       ) : null}
       {outcome && !isRunning ? (

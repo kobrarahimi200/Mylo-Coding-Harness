@@ -23,6 +23,8 @@ export type PlanView = {
   overallLabel: string;
   overallTone: PlanTone;
   request?: string | undefined;
+  /** Id of the pending approval request this plan belongs to, when one is open. */
+  requestId?: string | undefined;
   error?: { message: string; raw: string } | undefined;
   plan: TaskPlan;
 };
@@ -57,7 +59,8 @@ export function planView(
     errorEvent?.type === "harness.plan_error"
       ? { message: errorEvent.message, raw: errorEvent.raw }
       : undefined;
-  const pendingPlan = state.pending.find((q) => q.questions[0]?.plan)?.questions[0]?.plan;
+  const pendingRequest = state.pending.find((q) => q.questions[0]?.plan);
+  const pendingPlan = pendingRequest?.questions[0]?.plan;
   const plan = pendingPlan ?? state.plan?.plan;
   if (!plan && !error) return undefined;
   const taskEvent = state.current.findLast(({ event }) => event.type === "harness.task")?.event;
@@ -81,6 +84,7 @@ export function planView(
     targetFiles: planTargetFiles(resolved),
     overallLabel: state.label,
     overallTone: tone(state.label),
+    requestId: pendingRequest?.id,
     request: taskEvent?.type === "harness.task" ? taskEvent.request : undefined,
     error: plan ? undefined : error,
   };

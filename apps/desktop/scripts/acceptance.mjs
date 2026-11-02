@@ -169,7 +169,7 @@ app.on("browser-window-created", (_event, window) => {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       throw new Error(
-        `Condition failed: ${source}\nUI: ${await evaluate("document.body.innerText")}\nControls: ${JSON.stringify(await evaluate("({task:document.querySelector('#mylo-task')?.value,buttons:Array.from(document.querySelectorAll('button')).filter(b=>b.textContent.includes('Generate')).map(b=>({text:b.textContent,disabled:b.disabled,title:b.title})),model:document.querySelector('[aria-label=\"Workspace AI model\"]')?.value})"))}\nErrors: ${JSON.stringify(errors)}`,
+        `Condition failed: ${source}\nUI: ${await evaluate("document.body.innerText")}\nControls: ${JSON.stringify(await evaluate("({task:document.querySelector('[contenteditable]')?.textContent,buttons:Array.from(document.querySelectorAll('button')).filter(b=>b.getAttribute('aria-label')==='Send').map(b=>({text:b.textContent,disabled:b.disabled,title:b.title})),model:document.querySelector('[aria-label=\"Workspace AI model\"]')?.value})"))}\nErrors: ${JSON.stringify(errors)}`,
       );
     };
     const hasButton = (label) =>
@@ -179,6 +179,15 @@ app.on("browser-window-created", (_event, window) => {
       await evaluate(
         `Array.from(document.querySelectorAll('button')).find(b => (b.textContent.trim() === ${JSON.stringify(label)} || b.getAttribute('aria-label') === ${JSON.stringify(label)}) && !b.disabled && b.getClientRects().length).click()`,
       );
+    };
+    // The Chat composer is the only task entry point: pick Agent mode, type, and send.
+    const submitTask = async (text) => {
+      await evaluate(
+        "Array.from(document.querySelectorAll('fieldset[aria-label=Mode] button')).find(b=>b.textContent.trim()==='Agent')?.click()",
+      );
+      await evaluate("document.querySelector('[contenteditable]').focus()");
+      await window.webContents.insertText(text);
+      await click("Send");
     };
     const mouseClick = async (expression) => {
       await waitFor(
@@ -217,7 +226,7 @@ app.on("browser-window-created", (_event, window) => {
         "const selector=document.querySelector('[aria-label=\"Workspace AI model\"]');selector.value='acceptance/vue-fixture';selector.dispatchEvent(new Event('change',{bubbles:true}));",
       );
       await waitFor(
-        "Array.from(document.querySelectorAll('button')).some(button=>button.textContent.trim()==='Generate Plan' && button.title==='Pi explores the repository using read-only tools')",
+        "Array.from(document.querySelectorAll('button')).some(button=>button.getAttribute('aria-label')==='Send')",
       );
       assert.equal(
         await evaluate("Boolean(document.querySelector('[aria-label=Calculator]'))"),
@@ -281,12 +290,9 @@ app.on("browser-window-created", (_event, window) => {
       await waitFor("!document.querySelector('[role=dialog]')");
       await mouseClick("document.querySelector('button[aria-label=Chats]')");
       await evaluate(
-        "window.acceptanceEvents=[];window.acceptanceRejections=[];window.addEventListener('unhandledrejection',event=>window.acceptanceRejections.push({message:event.reason?.message,stack:event.reason?.stack}));window.modus.agent.onEvent(event=>window.acceptanceEvents.push(event));document.querySelector('#mylo-task').focus()",
+        "window.acceptanceEvents=[];window.acceptanceRejections=[];window.addEventListener('unhandledrejection',event=>window.acceptanceRejections.push({message:event.reason?.message,stack:event.reason?.stack}));window.modus.agent.onEvent(event=>window.acceptanceEvents.push(event));undefined",
       );
-      await evaluate(
-        "const task=document.querySelector('#mylo-task');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(task,'Fix the failing unit test.');task.dispatchEvent(new Event('input',{bubbles:true}));",
-      );
-      await click("Generate Plan");
+      await submitTask("Fix the failing unit test.");
       await waitFor(hasButton("Approve plan"));
       assert.equal(requestCount, 2, "Execution began before plan approval");
       // Closing animation completion must never gate delivery of an approval.
@@ -393,7 +399,7 @@ app.on("browser-window-created", (_event, window) => {
       await waitFor(
         `window.modus.files.read({cwd:${JSON.stringify(project)},path:'src/counter.ts'}).then(file=>file.content===${JSON.stringify(userDraft)})`,
       );
-      await click("Rollback");
+      await click("Safe rollback");
       await waitFor(
         "document.body.textContent.includes('This file changed after the agent proposal')",
       );
@@ -409,7 +415,7 @@ app.on("browser-window-created", (_event, window) => {
       );
       window.setSize(900, 700);
       await waitFor("window.innerWidth === 900");
-      await click("Collapse Agent Workspace");
+      await click("Collapse Agent Activity");
       await waitFor("document.body.scrollWidth <= window.innerWidth");
       await click("Code");
       assert.equal(
@@ -420,9 +426,9 @@ app.on("browser-window-created", (_event, window) => {
       );
       window.setSize(1440, 900);
       await waitFor("window.innerWidth === 1440");
-      await click("Toggle Agent Workspace");
+      await click("Toggle Agent Activity");
       await waitFor(
-        "document.querySelector('[aria-label=\"Agent Workspace\"]')?.clientWidth >= 300",
+        "document.querySelector('[aria-label=\"Agent Activity\"]')?.clientWidth >= 300",
       );
       const screenshot = fileURLToPath(
         new URL("../../../output/playwright/mylo-workspace.png", import.meta.url),
@@ -433,10 +439,7 @@ app.on("browser-window-created", (_event, window) => {
       // the previously selected Skills settings, and testing must stay inline.
       rejectTask = true;
       await click("Chat");
-      await evaluate(
-        "const nextTask=document.querySelector('#mylo-task');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(nextTask,'Fixture provider failure');nextTask.dispatchEvent(new Event('input',{bubbles:true}));",
-      );
-      await click("Generate Plan");
+      await submitTask("Fixture provider failure");
       await waitFor("document.body.innerText.includes('Authentication failed')");
       await mouseClick("document.querySelector('button[aria-label=\"Open Settings\"]')");
       await mouseClick(

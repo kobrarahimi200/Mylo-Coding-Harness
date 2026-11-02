@@ -23,7 +23,8 @@ export type PlanApproval = {
   busy: boolean;
   onApprove(plan: TaskPlan): void;
   onReject(): void;
-  onReplan?(): void;
+  /** Receives the current draft (including unsaved edits) so nothing the user typed is lost. */
+  onReplan?(plan: TaskPlan): void;
 };
 
 const TONE_CLASS: Record<PlanTone, string> = {
@@ -77,9 +78,12 @@ function Badge({ tone, children }: { tone: PlanTone; children: string }) {
 export function ExecutionPlanCard({
   view,
   approval,
+  embedded = false,
 }: {
   view: PlanView;
   approval?: PlanApproval | undefined;
+  /** Inside a padded side panel: no outer margin, tighter step indent. */
+  embedded?: boolean;
 }) {
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [editing, setEditing] = useState(false);
@@ -99,7 +103,10 @@ export function ExecutionPlanCard({
   return (
     <section
       aria-label="Execution plan"
-      className="mx-4 my-3 rounded-xl border border-hairline bg-panel text-sm"
+      className={cn(
+        "w-full min-w-0 max-w-full rounded-xl border border-hairline bg-panel text-sm",
+        embedded ? "my-0" : "mx-4 my-3",
+      )}
     >
       <header className="flex flex-wrap items-start gap-3 border-b border-hairline-soft p-4">
         <IconListCheck size={18} aria-hidden className="mt-0.5 shrink-0 text-accent" />
@@ -165,19 +172,19 @@ export function ExecutionPlanCard({
           </div>
         </div>
       ) : (
-        <ol className="grid gap-1 p-2">
+        <ol className="grid w-full min-w-0 gap-1 p-2">
           {view.steps.map((step, index) => {
             const expandable = Boolean(step.description || step.detail);
             const expanded = open[index] ?? false;
             return (
               // biome-ignore lint/suspicious/noArrayIndexKey: duplicate step text is allowed; position is the identity
-              <li key={index} className="rounded-lg">
+              <li key={index} className="w-full min-w-0 rounded-lg">
                 <button
                   type="button"
                   aria-expanded={expandable ? expanded : undefined}
                   disabled={!expandable}
                   onClick={() => setOpen((current) => ({ ...current, [index]: !expanded }))}
-                  className="flex w-full items-start gap-3 rounded-lg px-2 py-2 text-left enabled:hover:bg-hover"
+                  className="flex w-full min-w-0 items-start gap-3 rounded-lg px-2 py-2 text-left enabled:hover:bg-hover"
                 >
                   <span className="mt-0.5 w-5 shrink-0 text-right text-xs text-fg-faint">
                     {index + 1}
@@ -194,7 +201,12 @@ export function ExecutionPlanCard({
                   ) : null}
                 </button>
                 {expanded ? (
-                  <div className="ml-16 mb-2 grid gap-1 pr-3 text-xs text-fg-muted">
+                  <div
+                    className={cn(
+                      "mb-2 grid gap-1 pr-3 text-xs text-fg-muted",
+                      embedded ? "ml-10" : "ml-16",
+                    )}
+                  >
                     {step.description ? <p className="break-words">{step.description}</p> : null}
                     {step.detail ? (
                       <p className="break-words text-fg-faint">{step.detail}</p>
@@ -218,6 +230,16 @@ export function ExecutionPlanCard({
               >
                 Approve plan
               </Button>
+              {approval.onReplan ? (
+                <Button
+                  variant="ghost"
+                  disabled={approval.busy || !canApprove}
+                  onClick={() => approval.onReplan?.({ goal, steps })}
+                >
+                  <IconRefresh size={14} aria-hidden />
+                  Re-plan with my edits
+                </Button>
+              ) : null}
               <Button variant="ghost" disabled={approval.busy} onClick={() => setEditing(false)}>
                 Cancel edit
               </Button>
@@ -239,7 +261,11 @@ export function ExecutionPlanCard({
                 Reject
               </Button>
               {approval.onReplan ? (
-                <Button variant="ghost" disabled={approval.busy} onClick={approval.onReplan}>
+                <Button
+                  variant="ghost"
+                  disabled={approval.busy}
+                  onClick={() => approval.onReplan?.(view.plan)}
+                >
                   <IconRefresh size={14} aria-hidden />
                   Re-plan
                 </Button>

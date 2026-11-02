@@ -11,6 +11,7 @@ function relevant(event: AgentEvent): boolean {
       "tool.ended",
       "run.started",
       "session.status",
+      "run.completed",
       "run.failed",
       "run.cancelled",
       "run.awaiting_review",

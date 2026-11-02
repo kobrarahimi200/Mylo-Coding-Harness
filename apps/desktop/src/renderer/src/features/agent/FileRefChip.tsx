@@ -66,6 +66,8 @@ export async function resolveWorkspaceFileRef(
   ref: string,
 ): Promise<string | undefined> {
   const core = fileRefCore(ref);
+  // URLs are never workspace files; probing them only produces failed IPC reads.
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(core) && !core.startsWith("file:")) return undefined;
   const key = `${cwd}::${core}`;
   if (resolveCache.has(key)) {
     const cached = resolveCache.get(key);

@@ -23,8 +23,9 @@ import { preparePromptImage } from "../files/prompt-image";
 import { createHarnessApprovalExtension } from "../harness/approval-policy";
 import { auditHarnessEvent } from "../harness/audit-log";
 import { checkpointStore } from "../harness/checkpoints";
-import { approveTaskPlan, parseTaskPlan } from "../harness/planning";
+import { approveTaskPlan, parseTaskPlan, reviewTaskPlan } from "../harness/planning";
 import { createValidationRetryPrompt, shouldRetryValidation } from "../harness/retry-policy";
+import { logRunEvent } from "../harness/run-diagnostics";
 import {
   finalReviewDecision,
   TaskFailureError,
@@ -110,6 +111,7 @@ function resetAssistant(observation: RunObservation): void {
 }
 
 const TOOL_DELTA_THROTTLE_MS = 100;
+const MAX_REPLANS = 3;
 
 export class PiSdkRuntime implements AgentRuntime {
   private taskControllers = new Map<string, AbortController>();
@@ -154,6 +156,7 @@ export class PiSdkRuntime implements AgentRuntime {
           .get(event.sessionId)
           ?.session.sessionManager.appendCustomEntry("mylo.harness", event);
       }
+      logRunEvent(event);
       appendAgentView(event);
       window.webContents.send(IPC_CHANNELS.agentEvent, event);
       maybeNotifyAgentEvent(window, event);
@@ -867,7 +870,7 @@ export class PiSdkRuntime implements AgentRuntime {
                 },
               ),
               id: "accept-task",
-              header: "Accept this task result?",
+              header: "Accept final result",
               detail: `Validation: ${validationStatusLabel(validationOutcome)}.${validationOutcome !== "passed" ? " No validation passed." : ""} Review the Diff and Tests panels. File changes already approved individually remain on disk. You can keep them for manual review instead of marking the task accepted.`,
               options: [{ label: "Accept result" }, { label: "Keep for manual review" }],
             },
@@ -1055,41 +1058,63 @@ export class PiSdkRuntime implements AgentRuntime {
     });
     this.planningSessions.add(info.id);
     const tools = session.getActiveToolNames();
+    const planOnly =
+      'PLAN ONLY: Explore relevant repository files using read-only tools. Do not edit or execute commands. Return only JSON: {"goal":"specific goal","steps":["concrete steps referencing actual files and validation commands"]}.';
+    let prompt = `${request}\n\n${planOnly}`;
+    // Planning only needs a short JSON outline, so deep reasoning just adds latency.
+    const thinkingLevel = session.thinkingLevel;
+    const fastPlanning = thinkingLevel === "medium" || thinkingLevel === "high";
     try {
+      if (fastPlanning) session.setThinkingLevel("low");
       session.setActiveToolsByName(["read", "ls", "find", "grep"]);
-      await session.prompt(
-        `${request}\n\nPLAN ONLY: Explore relevant repository files using read-only tools. Do not edit or execute commands. Return only JSON: {"goal":"specific goal","steps":["concrete steps referencing actual files and validation commands"]}.`,
-        { source: "extension" },
-      );
-      const last = session.messages.findLast((message) => message.role === "assistant");
-      if (!last || last.role !== "assistant")
-        throw new Error("Pi returned no assistant response while planning.");
-      if (last.stopReason === "aborted") throw new Error("Planning cancelled.");
-      if (last.stopReason === "error")
-        throw new Error(
-          `Pi planning failed: ${last.errorMessage || "The model provider returned an error without details."}`,
-        );
-      const text = last.content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n");
-      let parsed: import("../../shared/harness").TaskPlan;
-      try {
-        parsed = parseTaskPlan(text);
-      } catch (cause) {
-        const reason = cause instanceof Error ? cause.message : String(cause);
+      for (let replans = 0; ; replans++) {
+        await session.prompt(prompt, { source: "extension" });
+        const last = session.messages.findLast((message) => message.role === "assistant");
+        if (!last || last.role !== "assistant")
+          throw new Error("Pi returned no assistant response while planning.");
+        if (last.stopReason === "aborted") throw new Error("Planning cancelled.");
+        if (last.stopReason === "error")
+          throw new Error(
+            `Pi planning failed: ${last.errorMessage || "The model provider returned an error without details."}`,
+          );
+        const text = last.content
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+        let parsed: import("../../shared/harness").TaskPlan;
+        try {
+          parsed = parseTaskPlan(text);
+        } catch (cause) {
+          const reason = cause instanceof Error ? cause.message : String(cause);
+          emit({
+            type: "harness.plan_error",
+            sessionId: info.id,
+            message: `The plan returned by the model could not be parsed: ${reason}`,
+            raw: redactSecrets(text).slice(0, 4000),
+          });
+          throw new Error(`Pi planning failed: the plan could not be parsed (${reason}).`);
+        }
+        const decision = await reviewTaskPlan(parsed, info.id, emit, mode, replans < MAX_REPLANS);
+        if (decision.kind === "approved") return decision.plan;
+        // The superseded plan was never approved and nothing was executed.
         emit({
-          type: "harness.plan_error",
+          type: "extension.notice",
           sessionId: info.id,
-          message: `The plan returned by the model could not be parsed: ${reason}`,
-          raw: redactSecrets(text).slice(0, 4000),
+          message: `Plan superseded · generating a revised plan (${replans + 1}/${MAX_REPLANS})`,
+          level: "info",
         });
-        throw new Error(`Pi planning failed: the plan could not be parsed (${reason}).`);
+        emit({
+          type: "harness.phase",
+          sessionId: info.id,
+          phase: "planning",
+          detail: "Pi is revising the plan from your edits. No files will change before approval.",
+        });
+        prompt = `${request}\n\nThe user asked for a revised plan. Their current draft (keep what they edited, improve the rest):\n${JSON.stringify(decision.draft)}\n\n${planOnly}`;
       }
-      return await approveTaskPlan(parsed, info.id, emit, mode);
     } finally {
       this.planningSessions.delete(info.id);
       session.setActiveToolsByName(tools);
+      if (fastPlanning) session.setThinkingLevel(thinkingLevel);
     }
   }
 

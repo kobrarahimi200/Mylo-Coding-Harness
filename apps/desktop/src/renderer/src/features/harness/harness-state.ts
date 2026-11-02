@@ -1,5 +1,6 @@
 import type { AgentEventItem } from "../../../../shared/agent-events";
 import type { QuestionRequest } from "../../../../shared/contracts";
+import { scopeToLatestRun } from "../../../../shared/run-scope";
 export function currentTaskItems(items: AgentEventItem[]): AgentEventItem[] {
   let start = items.findLastIndex(({ event }) => event.type === "harness.task");
   if (start < 0) start = items.findLastIndex(({ event }) => event.type === "run.started");
@@ -10,7 +11,11 @@ export function harnessState(
   questions: QuestionRequest[],
   sessionId: string | undefined,
 ) {
-  const current = currentTaskItems(items),
+  // Another session's events must never leak into this session's task view.
+  const scoped = sessionId
+    ? items.filter(({ event }) => !("sessionId" in event) || event.sessionId === sessionId)
+    : items;
+  const current = currentTaskItems(scopeToLatestRun(scoped)),
     pending = questions.filter((q) => q.sessionId === sessionId);
   const phase = current.findLast(({ event }) => event.type === "harness.phase")?.event;
   const terminal = current.findLastIndex(({ event }) =>

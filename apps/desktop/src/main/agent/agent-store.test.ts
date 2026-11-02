@@ -297,3 +297,37 @@ it("restores structured plans without replaying raw planning JSON as chat", () =
     approved: true,
   });
 });
+
+it("replays a legacy 'manual review' failure as a review state, not a failure", () => {
+  const { id, manager } = fixture();
+  const phase = (name: string, detail: string) =>
+    manager.appendCustomEntry("mylo.harness", {
+      type: "harness.phase",
+      sessionId: id,
+      phase: name,
+      detail,
+    });
+  phase("executing", "Pi is working");
+  phase("failed", "Task left for manual review; file changes were preserved.");
+  const types = readAgentHistory(id).events.map(({ event }) => event.type);
+  const phases = readAgentHistory(id).events.flatMap(({ event }) =>
+    event.type === "harness.phase" ? [event.phase] : [],
+  );
+  expect(phases).toContain("awaiting_review");
+  expect(phases).not.toContain("failed");
+  expect(types).not.toContain("run.failed");
+});
+
+it("still replays genuine failures as failures", () => {
+  const { id, manager } = fixture();
+  manager.appendCustomEntry("mylo.harness", {
+    type: "harness.phase",
+    sessionId: id,
+    phase: "failed",
+    detail: "401 invalid api key",
+  });
+  const phases = readAgentHistory(id).events.flatMap(({ event }) =>
+    event.type === "harness.phase" ? [event.phase] : [],
+  );
+  expect(phases).toContain("failed");
+});

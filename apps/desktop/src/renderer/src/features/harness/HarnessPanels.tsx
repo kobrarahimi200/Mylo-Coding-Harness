@@ -4,27 +4,26 @@ import { validationStatusLabel } from "../../../../shared/harness";
 import { CodeDiff } from "../../components/code/CodeDiff";
 import { fileDiff } from "../agent/diff/fileDiff";
 import { InlineDiffView } from "../agent/diff/InlineDiff";
-import { ExecutionPlanCard } from "./ExecutionPlanCard";
 import { currentTaskItems } from "./harness-state";
-import { pendingPlanQuestion, usePlanApproval } from "./plan-actions";
+import { PlanReview } from "./PlanReview";
+import { pendingPlanQuestion } from "./plan-actions";
 import { planView } from "./plan-view";
 
 export function HarnessPlan({
   items,
   questions = [],
   sessionId,
+  interactive = true,
   onError,
 }: {
   items: AgentEventItem[];
   questions?: QuestionRequest[];
   sessionId?: string | undefined;
+  /** False when another surface (the Agent Activity) owns the approval controls. */
+  interactive?: boolean;
   onError?: (message: string) => void;
 }) {
   const view = planView(items, questions, sessionId);
-  const approval = usePlanApproval(
-    pendingPlanQuestion(questions, sessionId),
-    onError ?? (() => {}),
-  );
   if (!view)
     return (
       <p className="p-6 text-sm text-fg-muted">
@@ -34,7 +33,16 @@ export function HarnessPlan({
     );
   return (
     <section className="h-full overflow-auto py-2">
-      <ExecutionPlanCard view={view} approval={approval} />
+      {interactive ? null : (
+        <p className="mx-4 mb-2 text-xs text-fg-muted">
+          Approval controls are in the Agent Activity while it is open.
+        </p>
+      )}
+      <PlanReview
+        view={view}
+        request={interactive ? pendingPlanQuestion(questions, sessionId) : undefined}
+        onError={onError ?? (() => {})}
+      />
     </section>
   );
 }

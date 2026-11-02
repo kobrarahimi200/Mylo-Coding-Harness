@@ -33,6 +33,10 @@ export default defineConfig({
   renderer: {
     root: "src/renderer",
     plugins: [react(), tailwindcss()],
+    server: {
+      port: 5173,
+      strictPort: true,
+    },
     build: {
       outDir: "out/renderer",
       rollupOptions: {

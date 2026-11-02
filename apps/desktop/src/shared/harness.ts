@@ -3,6 +3,8 @@ export type ValidationStatus = "running" | "passed" | "failed" | "skipped" | "no
 export function validationStatusLabel(status: ValidationStatus): string {
   return status === "not_configured" ? "NOT CONFIGURED" : status.toUpperCase();
 }
+/** Answer option that asks the harness to regenerate a pending plan instead of approving it. */
+export const REPLAN_OPTION = "Re-plan";
 export type AgentMode = "ask" | "plan" | "agent";
 export const AGENT_MODES: readonly AgentMode[] = ["ask", "plan", "agent"];
 export type HarnessPhase =

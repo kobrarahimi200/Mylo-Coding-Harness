@@ -78,11 +78,18 @@ function looksBinary(buffer: Buffer): boolean {
 /** Read a workspace file as UTF-8 text, flagging binary and over-cap files. */
 export function readWorkspaceFile(root: string, path: string): FileReadResult {
   const abs = resolveWorkspacePath(root, path);
-  const stat = statSync(abs);
+  const relativePath = relative(resolve(root), abs).split(sep).join("/");
+  let stat: ReturnType<typeof statSync>;
+  try {
+    stat = statSync(abs);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw new Error(`File not found: ${relativePath}. It may have been moved or deleted.`);
+    throw error;
+  }
   if (stat.isDirectory()) {
     throw new Error("Path is a directory, not a file.");
   }
-  const relativePath = relative(resolve(root), abs).split(sep).join("/");
   const base = {
     path: abs,
     relativePath,

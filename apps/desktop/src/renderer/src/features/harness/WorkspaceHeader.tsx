@@ -86,7 +86,7 @@ export function WorkspaceHeader({
         <button
           className="mylo-icon-button"
           type="button"
-          aria-label="Toggle Agent Workspace"
+          aria-label="Toggle Agent Activity"
           aria-pressed={agentOpen}
           onClick={onToggleAgent}
         >

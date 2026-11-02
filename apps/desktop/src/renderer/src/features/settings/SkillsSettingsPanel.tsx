@@ -1,9 +1,13 @@
-import { IconFolder } from "@tabler/icons-react";
+import { IconEdit, IconFolder, IconPlus, IconTrash } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
-import type { SkillState } from "../../../../shared/contracts";
+import type { SkillDraft, SkillInfo, SkillState } from "../../../../shared/contracts";
+import { Button } from "../../components/ui/Button";
 import { ResourceRow } from "../../components/ui/ResourceRow";
 import { SearchField } from "../../components/ui/SearchField";
 import { SettingsPageHeader } from "../../components/ui/SettingsPageHeader";
+import { ConfirmDeleteDialog, SkillEditorDialog } from "./SkillEditorDialog";
+
+type Editor = { mode: "create" } | { mode: "edit"; path: string; draft: SkillDraft };
 
 export function SkillsSettingsPanel({
   cwd,
@@ -19,6 +23,8 @@ export function SkillsSettingsPanel({
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(Boolean(sessionId));
+  const [editor, setEditor] = useState<Editor>();
+  const [deleting, setDeleting] = useState<SkillInfo>();
   useEffect(() => {
     let active = true;
     let request = 0;
@@ -65,54 +71,66 @@ export function SkillsSettingsPanel({
     <section className="min-w-0 space-y-5">
       <SettingsPageHeader title="Skills" />
       <p className="text-sm text-fg-muted">
-        Add folders containing trusted Pi skills. Skills provide instructions to the agent.
+        Skills are reusable instructions for the agent. Create your own, or add a folder of trusted
+        skills.
       </p>
-      <button
-        type="button"
-        disabled={!sessionId || loading || busy}
-        onClick={() => {
-          if (sessionId)
-            void window.modus.skills
-              .addFolder(sessionId)
-              .then(async (next) => {
-                setState(next);
-                setFolders(await window.modus.skills.folders(sessionId));
-              })
-              .catch((cause: unknown) => setError(String(cause)));
-        }}
-      >
-        Add skill folder
-      </button>
-      <button
-        type="button"
-        className="mylo-button ml-3"
-        disabled={!sessionId || loading || busy}
-        title={
-          busy
-            ? "Stop the current task before refreshing skills"
-            : "Reload trusted Pi resources and refresh discovered skills"
-        }
-        onClick={() => {
-          if (!sessionId) return;
-          setLoading(true);
-          void window.modus.app
-            .reloadConfiguration()
-            .then(() => window.modus.skills.list(sessionId))
-            .then(setState)
-            .catch((cause: unknown) => setError(String(cause)))
-            .finally(() => setLoading(false));
-        }}
-      >
-        Refresh skills
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="primary"
+          disabled={!sessionId || loading || busy}
+          onClick={() => setEditor({ mode: "create" })}
+        >
+          <IconPlus aria-hidden size={15} stroke={2} />
+          New skill
+        </Button>
+        <Button
+          disabled={!sessionId || loading || busy}
+          onClick={() => {
+            if (sessionId)
+              void window.modus.skills
+                .addFolder(sessionId)
+                .then(async (next) => {
+                  setState(next);
+                  setFolders(await window.modus.skills.folders(sessionId));
+                })
+                .catch((cause: unknown) => setError(String(cause)));
+          }}
+        >
+          Add skill folder
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={!sessionId || loading || busy}
+          title={
+            busy
+              ? "Stop the current task before refreshing skills"
+              : "Reload trusted Pi resources and refresh discovered skills"
+          }
+          onClick={() => {
+            if (!sessionId) return;
+            setLoading(true);
+            void window.modus.app
+              .reloadConfiguration()
+              .then(() => window.modus.skills.list(sessionId))
+              .then(setState)
+              .catch((cause: unknown) => setError(String(cause)))
+              .finally(() => setLoading(false));
+          }}
+        >
+          Refresh
+        </Button>
+      </div>
       {busy ? (
         <p className="text-xs text-fg-faint">Stop the agent before changing its skills.</p>
       ) : null}
       {folders.map((path) => (
-        <div className="flex gap-3 text-sm" key={path}>
-          <span className="break-all">{path}</span>
-          <button
-            type="button"
+        <div
+          className="flex items-center justify-between gap-3 rounded-lg bg-accent-soft px-3 py-2 text-sm"
+          key={path}
+        >
+          <span className="break-all text-fg-muted">{path}</span>
+          <Button
+            variant="ghost"
             disabled={!sessionId || busy}
             onClick={() => {
               if (sessionId)
@@ -126,7 +144,7 @@ export function SkillsSettingsPanel({
             }}
           >
             Remove
-          </button>
+          </Button>
         </div>
       ))}
       <SearchField
@@ -151,7 +169,9 @@ export function SkillsSettingsPanel({
         </p>
       ))}
       {!sessionId ? (
-        <p className="text-sm text-fg-muted">No active session.</p>
+        <p className="text-sm text-fg-muted">
+          Open or start a chat in a project to create skills or add skill folders.
+        </p>
       ) : loading ? (
         <p role="status" className="text-sm text-fg-muted">
           Loading skills...
@@ -195,6 +215,33 @@ export function SkillsSettingsPanel({
               meta={skill.path}
               title={skill.name}
             />
+            {skill.editable ? (
+              <div className="mylo-skill-actions">
+                <Button
+                  variant="ghost"
+                  disabled={busy || loading}
+                  onClick={() => {
+                    if (!sessionId) return;
+                    void window.modus.skills
+                      .read({ sessionId, path: skill.path })
+                      .then((draft) => setEditor({ mode: "edit", path: skill.path, draft }))
+                      .catch((cause: unknown) => setError(String(cause)));
+                  }}
+                >
+                  <IconEdit aria-hidden size={15} stroke={1.8} />
+                  Edit
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="hover:text-danger"
+                  disabled={busy || loading}
+                  onClick={() => setDeleting(skill)}
+                >
+                  <IconTrash aria-hidden size={15} stroke={1.8} />
+                  Delete
+                </Button>
+              </div>
+            ) : null}
             <details className="mylo-skill-details">
               <summary>Details</summary>
               <p>{skill.description}</p>
@@ -212,6 +259,39 @@ export function SkillsSettingsPanel({
           </div>
         ))}
       </div>
+      {editor && sessionId ? (
+        <SkillEditorDialog
+          mode={editor.mode}
+          initial={
+            editor.mode === "edit" ? editor.draft : { name: "", description: "", instructions: "" }
+          }
+          onClose={() => setEditor(undefined)}
+          onSubmit={async (draft) => {
+            const next =
+              editor.mode === "create"
+                ? await window.modus.skills.create({ sessionId, ...draft })
+                : await window.modus.skills.update({
+                    sessionId,
+                    path: editor.path,
+                    description: draft.description,
+                    instructions: draft.instructions,
+                  });
+            setState(next);
+            setError(undefined);
+            setEditor(undefined);
+          }}
+        />
+      ) : null}
+      {deleting && sessionId ? (
+        <ConfirmDeleteDialog
+          name={deleting.name}
+          onCancel={() => setDeleting(undefined)}
+          onConfirm={async () => {
+            setState(await window.modus.skills.delete({ sessionId, path: deleting.path }));
+            setDeleting(undefined);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

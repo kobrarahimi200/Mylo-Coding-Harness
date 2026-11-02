@@ -66,9 +66,14 @@ let holdPlan = false;
 let rejectTool = false;
 let skipValidation = false;
 let holdFinalReview = false;
-let rejectChange = false;
 let manualReview = false;
 let editPlan = false;
+let replanOnce = false;
+function takeReplan(question: { id: string; allowReplan?: boolean }): boolean {
+  if (!replanOnce || question.id !== "task-plan" || !question.allowReplan) return false;
+  replanOnce = false;
+  return true;
+}
 const window = {
   webContents: {
     send: (_channel: string, event: AgentEvent) => {
@@ -98,7 +103,9 @@ const window = {
                             ? "Reject"
                             : question.options[0].label,
                     ]
-                  : [],
+                  : takeReplan(question)
+                    ? ["Re-plan"]
+                    : [],
                 ...(question.prefill !== undefined
                   ? {
                       custom:
@@ -109,8 +116,7 @@ const window = {
                   : {}),
               },
             ],
-            (rejectPlan && question.id === "task-plan") ||
-              (rejectChange && question.id === "edit-proposed-change"),
+            rejectPlan && question.id === "task-plan",
           );
         });
     },
@@ -469,12 +475,17 @@ it("uses Pi to generate a repository plan, executes an approved file tool, and p
   );
   expect(relevant).toContainEqual(
     expect.objectContaining({
+      type: "harness.change",
+      path: "input.txt",
+      after: "approved change",
+    }),
+  );
+  expect(relevant).not.toContainEqual(
+    expect.objectContaining({
       type: "question.requested",
       request: expect.objectContaining({
         questions: expect.arrayContaining([
-          expect.objectContaining({
-            codeChange: expect.objectContaining({ before: "original", after: "approved change" }),
-          }),
+          expect.objectContaining({ id: "edit-proposed-change" }),
         ]),
       }),
     }),
@@ -865,6 +876,35 @@ it("never streams raw planning JSON as chat and emits structured plan events", a
   }
 }, 30000);
 
+it("re-plans in the same task without rejecting, executing or duplicating the task", async () => {
+  const { id, cwd } = workspace();
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Re-plan" });
+  replanOnce = true;
+  try {
+    faux.appendResponses([
+      fauxAssistantMessage(JSON.stringify({ goal: "First plan", steps: ["Inspect input.txt"] })),
+    ]);
+    answer("Read-only explanation");
+    await runtime.prompt(window, { sessionId: session.id, message: "Explain this project" });
+    const relevant = events.filter((e) => e.sessionId === session.id);
+    const plans = relevant.filter((e) => e.type === "harness.plan");
+    expect(plans.map((e) => e.approved)).toEqual([false, false, true]);
+    expect(plans[0]).toMatchObject({ plan: { goal: "First plan" } });
+    expect(plans[1]).toMatchObject({ plan: { goal: "Fixture coding task" } });
+    expect(relevant.filter((e) => e.type === "harness.task")).toHaveLength(1);
+    expect(relevant.some((e) => e.type === "run.rejected")).toBe(false);
+    const firstApproved = relevant.findIndex((e) => e.type === "harness.plan" && e.approved);
+    expect(
+      relevant
+        .slice(0, firstApproved)
+        .some((e) => e.type === "tool.started" || e.type === "harness.change"),
+    ).toBe(false);
+  } finally {
+    replanOnce = false;
+    await runtime.dispose(session.id);
+  }
+}, 30000);
+
 it("runs the plan the user edited, not the model's original", async () => {
   const { id, cwd } = workspace();
   const session = await runtime.create(window, { workspaceId: id, cwd, title: "Edited plan" });
@@ -906,10 +946,10 @@ it("reports an unreadable plan clearly and executes nothing", async () => {
   }
 }, 30000);
 
-it("does not apply a rejected editable file proposal", async () => {
+it("applies approved-plan file changes without a second approval prompt", async () => {
   const { id, cwd } = workspace();
   writeFileSync(join(cwd, "original.txt"), "keep me");
-  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Reject file" });
+  const session = await runtime.create(window, { workspaceId: id, cwd, title: "Plan only" });
   await runtime.ensure(window, session.id);
   const sdk = sessionResources().find((item) => item.id === session.id)?.session;
   if (!sdk) throw new Error("Missing session");
@@ -917,28 +957,34 @@ it("does not apply a rejected editable file proposal", async () => {
   const write = fauxAssistantMessage([
     {
       type: "toolCall",
-      id: "reject-write",
+      id: "plan-write",
       name: "write",
-      arguments: { path: "original.txt", content: "unapproved" },
+      arguments: { path: "original.txt", content: "approved by plan" },
     },
   ]);
   write.stopReason = "toolUse";
   faux.appendResponses([
     fauxAssistantMessage(
-      JSON.stringify({ goal: "Update original.txt", steps: ["Review the proposed update"] }),
+      JSON.stringify({ goal: "Update original.txt", steps: ["Update original.txt"] }),
     ),
     write,
-    fauxAssistantMessage("Change rejected"),
+    fauxAssistantMessage("Updated original.txt"),
   ]);
-  rejectChange = true;
   try {
     await runtime.prompt(window, { sessionId: session.id, message: "Update original.txt" });
-    expect(readFileSync(join(cwd, "original.txt"), "utf8")).toBe("keep me");
+    expect(readFileSync(join(cwd, "original.txt"), "utf8")).toBe("approved by plan");
     expect(events.some((e) => e.sessionId === session.id && e.type === "harness.change")).toBe(
-      false,
+      true,
     );
+    expect(
+      events.some(
+        (e) =>
+          e.sessionId === session.id &&
+          e.type === "question.requested" &&
+          e.request.questions.some((q) => q.id === "edit-proposed-change"),
+      ),
+    ).toBe(false);
   } finally {
-    rejectChange = false;
     await runtime.dispose(session.id);
   }
 }, 30000);

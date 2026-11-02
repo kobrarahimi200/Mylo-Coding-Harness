@@ -189,6 +189,20 @@ export const resourceLocationSchema = z.object({
   path: nonEmptyString,
 });
 
+export const skillCreateSchema = z.object({
+  sessionId: nonEmptyString,
+  name: z.string().max(64),
+  description: z.string().max(4000),
+  instructions: z.string().max(100_000),
+});
+
+export const skillUpdateSchema = z.object({
+  sessionId: nonEmptyString,
+  path: nonEmptyString,
+  description: z.string().max(4000),
+  instructions: z.string().max(100_000),
+});
+
 export const mcpCommandSchema = z.object({
   sessionId: nonEmptyString,
   name: nonEmptyString,

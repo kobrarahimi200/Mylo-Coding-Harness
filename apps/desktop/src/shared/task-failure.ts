@@ -149,3 +149,11 @@ export function isTaskFailure(value: unknown): value is TaskFailure {
     typeof (value as TaskFailure).retryable === "boolean"
   );
 }
+
+/**
+ * Older harness versions recorded "Keep for manual review" as a failed run with this message.
+ * It is a review state, not a failure; history replay migrates it.
+ */
+export function isLegacyManualReview(text: string | undefined): boolean {
+  return /^task left for manual review\b/i.test(text?.trim() ?? "");
+}

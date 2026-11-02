@@ -1,4 +1,9 @@
 import { useEffect, useState } from "react";
+
+export function fitAgentWorkspaceWidth(width: number, viewport: number): number {
+  return Math.min(width, Math.max(0, viewport - 56));
+}
+
 export function useStoredNumber(key: string, fallback: number, min: number, max: number) {
   const [value, setValue] = useState(() => {
     try {
@@ -30,7 +35,7 @@ export function useWorkspacePanels() {
   return {
     agentOpen,
     setAgentOpen,
-    agentWidth,
+    agentWidth: fitAgentWorkspaceWidth(agentWidth, viewport),
     setAgentWidth,
     viewport,
     reservedWidth: agentOpen && viewport >= 1100 ? agentWidth : 0,

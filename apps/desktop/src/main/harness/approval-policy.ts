@@ -114,8 +114,12 @@ export async function approveToolCall(
       return { block: true, reason: assessment.reason, terminate: true };
     }
     if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
+      // The human already approved the plan; its file changes apply without a second prompt.
+      const planApproved = Boolean(context.getPlan?.());
       if (isToolCallEventType("write", event)) {
-        const edited = await askForEditedText(context, event, event.input.content);
+        const edited = planApproved
+          ? event.input.content
+          : await askForEditedText(context, event, event.input.content);
         if (edited === undefined)
           return { block: true, reason: "Code change rejected.", terminate: true };
         const violation = currentPathViolation(context.cwd, event);
@@ -135,7 +139,9 @@ export async function approveToolCall(
         const before = readFileSync(path, "utf8");
         let after = before;
         for (const edit of event.input.edits) {
-          const edited = await askForEditedText(context, event, edit.newText);
+          const edited = planApproved
+            ? edit.newText
+            : await askForEditedText(context, event, edit.newText);
           if (edited === undefined)
             return { block: true, reason: "Code change rejected.", terminate: true };
           const violation = currentPathViolation(context.cwd, event);
@@ -152,7 +158,7 @@ export async function approveToolCall(
         });
       }
     } else {
-      const decision = await ask(context, event, "Approve this command?", [
+      const decision = await ask(context, event, "Allow command execution", [
         { label: "Approve once" },
         { label: "Reject" },
       ]);
@@ -240,7 +246,7 @@ async function askForEditedText(
     questions: [
       {
         id: "edit-proposed-change",
-        header: "Review and apply the code change",
+        header: "Apply file change",
         detail: `${event.toolName}\n${toolDetail(event)}`,
         prefill: proposed,
         codeChange: {

@@ -35,6 +35,7 @@ import { cn } from "../../lib/cn";
 import { MarkdownPreview } from "../preview/MarkdownPreview";
 import { PreviewHost } from "../preview/PreviewHost";
 import { canReloadBuffer, isDirty } from "./file-buffers";
+import { fileErrorMessage } from "./file-error";
 import { materialIconForEntry } from "./fileIcons";
 import { hasLiveFilesWatch } from "./hasLiveFilesWatch";
 import { useFileBuffers } from "./useFileBuffers";
@@ -281,13 +282,15 @@ export function FilesPanel({
               return;
             }
             if (draftContentRef.current !== savedContentRef.current) {
-              setFileError(`File unavailable on disk. Your draft is preserved: ${String(error)}`);
+              setFileError(
+                `File unavailable on disk. Your draft is preserved: ${fileErrorMessage(error)}`,
+              );
               return;
             }
             setSelectedFile(undefined);
             setSavedContent(undefined);
             setDraftContent(undefined);
-            setFileError(error instanceof Error ? error.message : String(error));
+            setFileError(fileErrorMessage(error));
           }
         } catch {
           // list failed — leave UI as-is for this burst
@@ -391,7 +394,7 @@ export function FilesPanel({
           setSelectedFile(undefined);
           setSavedContent(undefined);
           setDraftContent(undefined);
-          setFileError(error instanceof Error ? error.message : String(error));
+          setFileError(fileErrorMessage(error));
         });
     },
     [cwd, buffers, setSelectedFile, setSavedContent, setDraftContent],
@@ -430,7 +433,7 @@ export function FilesPanel({
         setFileError(undefined);
       } catch (error: unknown) {
         if (!cancelled) {
-          setFileError(error instanceof Error ? error.message : String(error));
+          setFileError(fileErrorMessage(error));
         }
       } finally {
         if (!cancelled) {

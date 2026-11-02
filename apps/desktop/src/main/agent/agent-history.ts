@@ -8,7 +8,7 @@ import type {
   PromptImageAttachment,
   SkillSelection,
 } from "../../shared/contracts";
-import { classifyFailure } from "../../shared/task-failure";
+import { classifyFailure, isLegacyManualReview } from "../../shared/task-failure";
 import { isPlanJsonText } from "../../shared/task-plan-text";
 import { sessionManagerFor } from "./agent-store";
 import { toolResultContent } from "./pi-tool-result";
@@ -60,6 +60,10 @@ export function readAgentHistory(sessionId: string): {
       activeRun = undefined;
       return;
     }
+    if (activeRun.status === "failed" && isLegacyManualReview(activeRun.error)) {
+      activeRun.status = "awaiting_review";
+      delete activeRun.error;
+    }
     if (activeRun.status === "failed")
       emit(
         {
@@ -95,7 +99,13 @@ export function readAgentHistory(sessionId: string): {
   };
   for (const entry of manager.getBranch()) {
     if (entry.type === "custom" && entry.customType === "mylo.harness") {
-      const event = entry.data as AgentEvent;
+      let event = entry.data as AgentEvent;
+      if (
+        event.type === "harness.phase" &&
+        event.phase === "failed" &&
+        isLegacyManualReview(event.detail)
+      )
+        event = { ...event, phase: "awaiting_review" };
       if (
         event.type === "harness.phase" &&
         activeRun &&

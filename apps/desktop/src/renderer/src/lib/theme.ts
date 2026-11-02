@@ -11,7 +11,7 @@ import { useSyncExternalStore } from "react";
 export type ThemeMode = "dark" | "light" | "dark-plus";
 
 const STORAGE_KEY = "modus.theme";
-const DEFAULT_THEME: ThemeMode = "dark";
+const DEFAULT_THEME: ThemeMode = "light";
 
 function readStored(): ThemeMode {
   try {

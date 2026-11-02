@@ -4,6 +4,9 @@ import type { QuestionAnswer, QuestionRequest } from "../../../../shared/contrac
 import { CodeDiff } from "../../components/code/CodeDiff";
 import { Button } from "../../components/ui/Button";
 import { DialogBody, DialogSurface } from "../../components/ui/DialogSurface";
+import { PlanReview } from "../harness/PlanReview";
+import { rejectPlan } from "../harness/plan-actions";
+import { planView } from "../harness/plan-view";
 
 export function ExtensionDialog({
   request,
@@ -24,6 +27,7 @@ export function ExtensionDialog({
   const diffsReady =
     (!question?.codeChange || readyDiffs.includes("proposal")) &&
     (question?.codeChanges ?? []).every((_, index) => readyDiffs.includes(`final:${index}`));
+  const planDialogView = question?.plan ? planView([], [request], request.sessionId) : undefined;
   if (!question) return null;
 
   async function respond(selected?: string, skipped = false): Promise<void> {
@@ -39,11 +43,13 @@ export function ExtensionDialog({
         selected: selected === undefined ? [] : [selected],
         ...(selected === undefined ? { custom: value } : {}),
       };
-      await window.modus.questions.respond({
-        requestId: request.id,
-        answers: skipped ? [] : [answer],
-        skipped,
-      });
+      if (question.plan) await rejectPlan(request);
+      else
+        await window.modus.questions.respond({
+          requestId: request.id,
+          answers: skipped ? [] : [answer],
+          skipped,
+        });
     } catch (caught) {
       submitting.current = false;
       setBusy(false);
@@ -60,21 +66,34 @@ export function ExtensionDialog({
       }}
     >
       <DialogSurface size="compact">
-        <Dialog.Title className="shrink-0 border-b border-hairline-soft p-5 break-words text-fg text-base">
-          {question.header}
-        </Dialog.Title>
-        <DialogBody className="px-5 py-4">
-          <p className="mylo-eyebrow">
+        <header className="shrink-0 px-6 pt-6 pb-3">
+          <p className="mylo-popup-pill">
             {question.plan
-              ? "PLAN APPROVAL"
+              ? "Review plan"
               : question.codeChange
-                ? "FILE CHANGE"
+                ? "Apply change"
                 : question.codeChanges
-                  ? "FINAL REVIEW"
+                  ? "Final result"
                   : question.id === "tool-approval"
-                    ? "COMMAND APPROVAL"
-                    : "HUMAN REVIEW"}
+                    ? "Run command"
+                    : "Your input"}
           </p>
+          <Dialog.Title className="mt-3 break-words font-semibold text-fg text-lg leading-snug">
+            {question.header}
+          </Dialog.Title>
+        </header>
+        <DialogBody className="px-6 pb-4">
+          <span className="sr-only">
+            {question.plan
+              ? "APPROVE IMPLEMENTATION PLAN"
+              : question.codeChange
+                ? "APPLY FILE CHANGE"
+                : question.codeChanges
+                  ? "ACCEPT FINAL RESULT"
+                  : question.id === "tool-approval"
+                    ? "ALLOW COMMAND EXECUTION"
+                    : "HUMAN REVIEW"}
+          </span>
           {contextLabel ? (
             <p className="mt-2 break-all text-xs text-fg-faint">{contextLabel}</p>
           ) : null}
@@ -104,14 +123,18 @@ export function ExtensionDialog({
               />
             </section>
           ))}
-          {question.options.length > 0 ? (
+          {question.plan && planDialogView ? (
+            <div className="mt-4">
+              <PlanReview view={planDialogView} request={request} onError={setError} />
+            </div>
+          ) : question.options.length > 0 ? (
             <div className="mt-4 grid gap-2">
               {question.options.map((option) => (
                 <button
                   key={option.label}
                   type="button"
                   disabled={busy || !diffsReady}
-                  className="break-words rounded-md border border-hairline px-3 py-2 text-left text-sm text-fg transition-colors hover:bg-hover focus-visible:outline-focus-ring"
+                  className="break-words rounded-lg border border-hairline bg-surface px-4 py-2.5 text-left text-sm text-fg shadow-sm transition-all hover:-translate-y-px hover:border-accent/40 hover:bg-accent-soft focus-visible:outline-focus-ring disabled:opacity-40 motion-reduce:transition-none"
                   onClick={() => void respond(option.label)}
                 >
                   {option.label}
@@ -126,9 +149,7 @@ export function ExtensionDialog({
                 void respond();
               }}
             >
-              {question.plan ? (
-                <PlanEditor plan={question.plan} onChange={setValue} />
-              ) : question.codeChange ? (
+              {question.codeChange ? (
                 <CodeDiff
                   before={question.codeChange.before}
                   after={question.codeChange.after}
@@ -145,58 +166,21 @@ export function ExtensionDialog({
                 />
               )}
               <Button type="submit" disabled={busy || !diffsReady} variant="primary">
-                {question.plan ? "Approve plan" : question.codeChange ? "Apply change" : "Continue"}
+                {question.codeChange ? "Apply change" : "Continue"}
               </Button>
             </form>
           )}
           {error ? <p className="mt-3 text-danger text-sm">{error}</p> : null}
         </DialogBody>
-        <footer className="shrink-0 border-t border-hairline-soft px-5 py-3">
+        <footer className="flex shrink-0 justify-end bg-panel px-6 py-3">
           <Dialog.Close
             disabled={busy}
-            className="rounded-md px-3 py-2 text-sm text-fg-muted hover:bg-hover"
+            className="rounded-lg px-3 py-2 text-sm text-fg-muted transition-colors hover:bg-hover hover:text-fg"
           >
             Cancel
           </Dialog.Close>
         </footer>
       </DialogSurface>
     </Dialog.Root>
-  );
-}
-
-function PlanEditor({
-  plan,
-  onChange,
-}: {
-  plan: import("../../../../shared/harness").TaskPlan;
-  onChange(text: string): void;
-}) {
-  const [goal, setGoal] = useState(plan.goal);
-  const [steps, setSteps] = useState(plan.steps.join("\n"));
-  return (
-    <div className="grid gap-4">
-      <label className="grid gap-2 text-xs">
-        Goal
-        <input
-          className="rounded border border-hairline bg-canvas p-2"
-          value={goal}
-          onChange={(event) => {
-            setGoal(event.target.value);
-            onChange(JSON.stringify({ goal: event.target.value, steps: steps.split("\n") }));
-          }}
-        />
-      </label>
-      <label className="grid gap-2 text-xs">
-        Execution steps (one per line)
-        <textarea
-          className="min-h-48 rounded border border-hairline bg-canvas p-2 text-sm"
-          value={steps}
-          onChange={(event) => {
-            setSteps(event.target.value);
-            onChange(JSON.stringify({ goal, steps: event.target.value.split("\n") }));
-          }}
-        />
-      </label>
-    </div>
   );
 }

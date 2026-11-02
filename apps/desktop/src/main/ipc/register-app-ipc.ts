@@ -81,11 +81,15 @@ import {
 } from "../mcp/mcp-service";
 import {
   addSkillFolder,
+  createSkill,
+  deleteSkill,
   listSkills,
+  readSkill,
   removeSkillFolder,
   revealSkill,
   setSkillEnabled,
   skillFolders,
+  updateSkill,
 } from "../skills/skills-service";
 import type { StartupTimeline } from "../startup/startup-timeline";
 import {
@@ -139,6 +143,8 @@ import {
   sessionIdSchema,
   sessionPinSchema,
   setModelThinkingSchema,
+  skillCreateSchema,
+  skillUpdateSchema,
   startupMetricSchema,
   terminalCreateSchema,
   terminalResizeSchema,
@@ -826,20 +832,52 @@ export function registerAppIpc({
     await revealMcpConfig(parsed.sessionId, parsed.path);
   });
 
-  ipcMain.handle("skills:folders", (event, sessionId: string) => {
+  ipcMain.handle("skills:folders", async (event, sessionId: string) => {
     assertTrustedSender(event);
-    return skillFolders(parseIpcInput(sessionIdSchema, sessionId, "skills:folders"));
+    const id = parseIpcInput(sessionIdSchema, sessionId, "skills:folders");
+    await getAgentRuntime().ensure(getSenderWindow(event), id);
+    return skillFolders(id);
   });
   ipcMain.handle("skills:add-folder", async (event, sessionId: string) => {
     assertTrustedSender(event);
     getAgentRuntime().assertIdle();
-    return addSkillFolder(parseIpcInput(sessionIdSchema, sessionId, "skills:add-folder"));
+    const id = parseIpcInput(sessionIdSchema, sessionId, "skills:add-folder");
+    await getAgentRuntime().ensure(getSenderWindow(event), id);
+    return addSkillFolder(id);
   });
   ipcMain.handle("skills:remove-folder", async (event, input) => {
     assertTrustedSender(event);
     getAgentRuntime().assertIdle();
     const parsed = parseIpcInput(resourceLocationSchema, input, "skills:remove-folder");
+    await getAgentRuntime().ensure(getSenderWindow(event), parsed.sessionId);
     return removeSkillFolder(parsed.sessionId, parsed.path);
+  });
+
+  ipcMain.handle("skills:read", (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(resourceLocationSchema, input, "skills:read");
+    return readSkill(parsed.sessionId, parsed.path);
+  });
+  ipcMain.handle("skills:create", async (event, input) => {
+    assertTrustedSender(event);
+    getAgentRuntime().assertIdle();
+    const parsed = parseIpcInput(skillCreateSchema, input, "skills:create");
+    await getAgentRuntime().ensure(getSenderWindow(event), parsed.sessionId);
+    return createSkill(parsed.sessionId, parsed);
+  });
+  ipcMain.handle("skills:update", async (event, input) => {
+    assertTrustedSender(event);
+    getAgentRuntime().assertIdle();
+    const parsed = parseIpcInput(skillUpdateSchema, input, "skills:update");
+    await getAgentRuntime().ensure(getSenderWindow(event), parsed.sessionId);
+    return updateSkill(parsed.sessionId, parsed.path, parsed);
+  });
+  ipcMain.handle("skills:delete", async (event, input) => {
+    assertTrustedSender(event);
+    getAgentRuntime().assertIdle();
+    const parsed = parseIpcInput(resourceLocationSchema, input, "skills:delete");
+    await getAgentRuntime().ensure(getSenderWindow(event), parsed.sessionId);
+    return deleteSkill(parsed.sessionId, parsed.path);
   });
 
   ipcMain.handle(IPC_CHANNELS.skillsList, async (event, sessionId: string) => {

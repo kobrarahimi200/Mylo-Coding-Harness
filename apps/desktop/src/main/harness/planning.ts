@@ -1,5 +1,5 @@
 import type { AgentEvent } from "../../shared/contracts";
-import type { AgentMode, TaskPlan } from "../../shared/harness";
+import { type AgentMode, REPLAN_OPTION, type TaskPlan } from "../../shared/harness";
 import { stripJsonFence } from "../../shared/task-plan-text";
 import { requestQuestions } from "../interaction/question-broker";
 import { auditHarnessEvent } from "./audit-log";
@@ -15,12 +15,18 @@ export function normalizeTaskPlan(plan: TaskPlan): TaskPlan {
   return { goal, steps };
 }
 
-export async function approveTaskPlan(
+export type PlanDecision =
+  | { kind: "approved"; plan: TaskPlan }
+  /** The user asked for a new plan; `draft` carries their latest edits. */
+  | { kind: "replan"; draft: TaskPlan };
+
+export async function reviewTaskPlan(
   proposed: TaskPlan,
   sessionId: string,
   emit: (event: AgentEvent) => void,
   mode: AgentMode = "agent",
-): Promise<TaskPlan> {
+  allowReplan = false,
+): Promise<PlanDecision> {
   emit({ type: "harness.plan", sessionId, plan: proposed, approved: false });
   emit({
     type: "harness.phase",
@@ -37,13 +43,14 @@ export async function approveTaskPlan(
     questions: [
       {
         id: "task-plan",
-        header: "Review and edit the task plan",
+        header: "Approve implementation plan",
         detail:
           mode === "plan"
-            ? "Edit the goal and steps, then approve to keep this plan. Nothing is executed in Plan mode. Close the dialog to reject."
-            : "Edit the goal and steps, then approve the plan to start execution. Close the dialog to reject.",
+            ? "Edit the goal and steps, then approve to keep this plan. Nothing is executed in Plan mode. Reject to discard it."
+            : "Edit the goal and steps, then approve the plan to start execution. Reject to discard it.",
         prefill: JSON.stringify(proposed, null, 2),
         plan: proposed,
+        ...(allowReplan ? { allowReplan: true } : {}),
         options: [],
       },
     ],
@@ -52,7 +59,17 @@ export async function approveTaskPlan(
     await auditHarnessEvent({ type: "plan", sessionId, outcome: "rejected" });
     throw new TaskRejectedError("plan", "Task plan rejected.");
   }
-  const plan = parseTaskPlan(edited.answers[0]?.custom ?? "");
+  const answer = edited.answers[0];
+  const plan = parseTaskPlan(answer?.custom ?? "");
+  if (allowReplan && answer?.selected[0] === REPLAN_OPTION) {
+    await auditHarnessEvent({
+      type: "plan",
+      sessionId,
+      outcome: "replan",
+      detail: JSON.stringify(plan),
+    });
+    return { kind: "replan", draft: plan };
+  }
   await auditHarnessEvent({
     type: "plan",
     sessionId,
@@ -66,7 +83,19 @@ export async function approveTaskPlan(
     message: `Plan approved · ${plan.goal} · ${plan.steps.length} steps`,
     level: "info",
   });
-  return plan;
+  return { kind: "approved", plan };
+}
+
+export async function approveTaskPlan(
+  proposed: TaskPlan,
+  sessionId: string,
+  emit: (event: AgentEvent) => void,
+  mode: AgentMode = "agent",
+): Promise<TaskPlan> {
+  const decision = await reviewTaskPlan(proposed, sessionId, emit, mode, false);
+  if (decision.kind !== "approved")
+    throw new Error("Plan approval returned an unexpected re-plan.");
+  return decision.plan;
 }
 
 export function parseTaskPlan(text: string): TaskPlan {

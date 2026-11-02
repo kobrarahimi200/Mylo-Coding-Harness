@@ -48,4 +48,15 @@ describe("ExecutionPlanCard", () => {
     expect(html).toContain("Technical details");
     expect(html).toContain("{oops");
   });
+
+  it("drops the outer margin when embedded in a side panel", () => {
+    const page = renderToStaticMarkup(<ExecutionPlanCard view={view} />);
+    const panel = renderToStaticMarkup(<ExecutionPlanCard embedded view={view} />);
+    expect(page).toContain("mx-4");
+    expect(panel).not.toContain("mx-4");
+    expect(panel).toContain("w-full min-w-0 max-w-full");
+    expect(panel).toContain('<ol class="grid w-full min-w-0');
+    expect(panel).toContain('class="w-full min-w-0 rounded-lg"');
+    expect(panel).toContain("flex w-full min-w-0 items-start");
+  });
 });

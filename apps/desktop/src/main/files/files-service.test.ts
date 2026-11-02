@@ -44,6 +44,30 @@ describe("readWorkspaceFile", () => {
     expect(result.binary).toBe(true);
     expect(result.content).toBe("");
   });
+
+  it("reports a deleted file with a clear, path-relative message", () => {
+    expect(() => readWorkspaceFile(root, join(root, "proof.js"))).toThrow(
+      "File not found: proof.js. It may have been moved or deleted.",
+    );
+    expect(() => readWorkspaceFile(root, "src/gone/deep.ts")).toThrow(/File not found: src\/gone/);
+  });
+
+  it("rejects directories and an empty file reads as empty text", () => {
+    expect(() => readWorkspaceFile(root, join(root, "src"))).toThrow("directory");
+    writeFileSync(join(root, "empty.txt"), "");
+    expect(readWorkspaceFile(root, "empty.txt")).toMatchObject({
+      binary: false,
+      truncated: false,
+      content: "",
+    });
+  });
+
+  it("truncates very large text files", () => {
+    writeFileSync(join(root, "big.txt"), "a".repeat(5_000_000));
+    const result = readWorkspaceFile(root, "big.txt");
+    expect(result.truncated).toBe(true);
+    expect(result.content.length).toBeLessThan(5_000_000);
+  });
 });
 
 describe("writeWorkspaceFile", () => {

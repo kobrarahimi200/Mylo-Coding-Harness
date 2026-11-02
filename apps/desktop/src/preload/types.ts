@@ -24,6 +24,7 @@ import type {
   QuestionAnswer,
   QuestionResponse,
   SessionDeletionResult,
+  SkillDraft,
   SkillSelection,
   SkillState,
   TerminalEvent,
@@ -239,6 +240,15 @@ export type ModusApi = {
     addFolder(sessionId: string): Promise<SkillState>;
     removeFolder(input: { sessionId: string; path: string }): Promise<SkillState>;
     list(sessionId: string): Promise<SkillState>;
+    read(input: { sessionId: string; path: string }): Promise<SkillDraft>;
+    create(input: SkillDraft & { sessionId: string }): Promise<SkillState>;
+    update(
+      input: Pick<SkillDraft, "description" | "instructions"> & {
+        sessionId: string;
+        path: string;
+      },
+    ): Promise<SkillState>;
+    delete(input: { sessionId: string; path: string }): Promise<SkillState>;
     onChanged(callback: (cwd: string) => void): () => void;
     openDir(input: { sessionId: string; path: string }): Promise<void>;
   };

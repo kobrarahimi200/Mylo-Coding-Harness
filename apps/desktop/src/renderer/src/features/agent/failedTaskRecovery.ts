@@ -1,10 +1,12 @@
 import type { AgentEventItem } from "../../../../shared/agent-events";
+import { scopeToLatestRun } from "../../../../shared/run-scope";
 import { classifyFailure, type TaskFailure } from "../../../../shared/task-failure";
 
 /** Neutral end states that are neither failures nor completions. */
 export function reviewOutcome(
-  items: AgentEventItem[],
+  allItems: AgentEventItem[],
 ): { kind: "awaiting_review" | "rejected"; reason?: "plan" | "review" } | undefined {
+  const items = scopeToLatestRun(allItems);
   const last = items.findLast(({ event }) =>
     [
       "run.started",
@@ -21,7 +23,8 @@ export function reviewOutcome(
 }
 
 /** Retry the actual user input, preserving context and attachments, never the internal planning prompt. */
-export function failedTaskRecovery(items: AgentEventItem[]) {
+export function failedTaskRecovery(allItems: AgentEventItem[]) {
+  const items = scopeToLatestRun(allItems);
   const failureIndex = items.findLastIndex(
     ({ event }) => event.type === "run.failed" || event.type === "runtime.error",
   );

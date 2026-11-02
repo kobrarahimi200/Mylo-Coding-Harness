@@ -93,6 +93,8 @@ export type QuestionPrompt = {
   codeChange?: { path: string; before: string; after: string };
   codeChanges?: { path: string; before: string; after: string }[];
   plan?: import("./harness").TaskPlan;
+  /** Plan approvals only: the user may ask the harness to regenerate the plan. */
+  allowReplan?: boolean;
   options: QuestionOption[];
 };
 
@@ -571,6 +573,15 @@ export type SkillInfo = {
   path: string;
   allowImplicitInvocation: boolean;
   enabled?: boolean;
+  /** True when Modus created the skill and may edit or delete it. */
+  editable?: boolean;
+};
+
+/** Editable fields of a SKILL.md. `name` is the folder name and slash command. */
+export type SkillDraft = {
+  name: string;
+  description: string;
+  instructions: string;
 };
 
 export type SkillState = {

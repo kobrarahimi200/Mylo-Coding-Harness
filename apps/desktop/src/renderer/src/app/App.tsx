@@ -37,6 +37,7 @@ import { HarnessDiff, HarnessPlan, HarnessTimeline } from "../features/harness/H
 import { harnessState } from "../features/harness/harness-state";
 import { ProjectExplorer } from "../features/harness/ProjectExplorer";
 import { pendingPlanQuestion } from "../features/harness/plan-actions";
+import { planSurface } from "../features/harness/plan-surface";
 import { useHarnessEvents } from "../features/harness/useHarnessEvents";
 import { useWorkspacePanels } from "../features/harness/useWorkspacePanels";
 import { WorkspaceHeader } from "../features/harness/WorkspaceHeader";
@@ -267,6 +268,19 @@ export function App() {
     [],
   );
 
+  // Returns to Chat with the submitted request as a draft. Never starts a session and never
+  // overwrites text the user has already typed.
+  const editTask = useCallback(
+    (request: string): void => {
+      setWorkspacePanel("chat");
+      if (!activeSession) return;
+      updateSessionComposerDraft(activeSession.id, (draft) =>
+        draft.value.trim() ? draft : { ...draft, value: request, parts: undefined },
+      );
+    },
+    [activeSession, updateSessionComposerDraft],
+  );
+
   const addContextToChat = useCallback(
     (item: ContextItem) => {
       if (activeSession) {
@@ -285,9 +299,10 @@ export function App() {
   );
 
   // A plan question is answered inline wherever the plan card is visible.
-  const planVisible = panels.agentOpen || workspacePanel === "chat" || workspacePanel === "plan";
+  const activePlanSurface = planSurface({ agentOpen: panels.agentOpen, panel: workspacePanel });
   const modalQuestion = extensionQuestions.find(
-    (q) => !planVisible || q.sessionId !== activeSessionId || !q.questions[0]?.plan,
+    (q) =>
+      activePlanSurface === "dialog" || q.sessionId !== activeSessionId || !q.questions[0]?.plan,
   );
   const questionSession = agentSessions.find((session) => session.id === modalQuestion?.sessionId);
   const questionContext = questionSession
@@ -525,7 +540,7 @@ export function App() {
                                         extensionQuestions,
                                         activeSession.id,
                                       )}
-                                      showPlan={!panels.agentOpen}
+                                      showPlan={activePlanSurface === "chat"}
                                       onModelChange={(next) =>
                                         void changeDefaultModel(next).catch(reportModelFailure)
                                       }
@@ -653,6 +668,7 @@ export function App() {
                                 items={harness.items}
                                 questions={extensionQuestions}
                                 sessionId={activeSessionId}
+                                interactive={activePlanSurface === "plan-tab"}
                                 onError={setSessionCreateError}
                               />
                             ) : workspacePanel === "timeline" ? (
@@ -704,10 +720,7 @@ export function App() {
                           questions={extensionQuestions}
                           sessionId={activeSessionId}
                           workspace={activeWorkspace}
-                          canGenerate={canCreateSession}
-                          onGenerate={(message) =>
-                            submitHeroPrompt(message, [], undefined, undefined, undefined, "agent")
-                          }
+                          onEditTask={editTask}
                           onStop={() => {
                             if (activeSessionId)
                               void window.modus.agent

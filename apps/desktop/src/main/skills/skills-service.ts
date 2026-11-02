@@ -1,7 +1,8 @@
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { dialog, shell } from "electron";
-import type { SkillState } from "../../shared/contracts";
+import type { SkillDraft, SkillState } from "../../shared/contracts";
+import { getPiCliAgentDir } from "../agent/agent-paths";
 import { getActiveAgentRun } from "../agent/agent-run-store";
 import { sessionResources } from "../agent/session-resources";
 import { desktopPreferences, saveDesktopPreferences } from "../preferences/desktop-preferences";
@@ -13,10 +14,15 @@ export function listSkills(sessionId: string): SkillState {
   const loaded = resource?.loader.getSkills();
   if (!loaded) throw new Error("Session resources are not loaded.");
   return {
-    skills: loaded.skills.map((skill) => ({ ...toSkillInfo(skill), enabled: true })),
+    skills: loaded.skills.map((skill) => ({
+      ...toSkillInfo(skill),
+      enabled: true,
+      editable: isManagedSkill(skill.filePath),
+    })),
     disabledSkills: disabledSkills(resource?.cwd ?? "").map((skill) => ({
       ...toSkillInfo(skill),
       enabled: false,
+      editable: isManagedSkill(skill.filePath),
     })),
     diagnostics: loaded.diagnostics.map(({ type, message, path }) => ({
       type,
@@ -96,5 +102,114 @@ export async function setSkillEnabled(
   for (const loaded of sessionResources()) {
     if (!loaded.session.isStreaming && !getActiveAgentRun(loaded.id)) await loaded.session.reload();
   }
+  return listSkills(sessionId);
+}
+
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+function managedSkillsRoot(): string {
+  return resolve(getPiCliAgentDir(), "skills");
+}
+
+function managedSkillFile(name: string): string {
+  return join(managedSkillsRoot(), name, "SKILL.md");
+}
+
+// Only skills Modus writes into Pi's user skills folder can be edited or deleted.
+function isManagedSkill(path: string): boolean {
+  const resolved = resolve(path);
+  return (
+    basename(resolved) === "SKILL.md" &&
+    SKILL_NAME.test(basename(dirname(resolved))) &&
+    resolved === managedSkillFile(basename(dirname(resolved)))
+  );
+}
+
+function validateSkillDraft(draft: SkillDraft): SkillDraft {
+  const name = draft.name.trim();
+  const description = draft.description.replace(/\s+/g, " ").trim();
+  const instructions = draft.instructions.trim();
+  if (name.length > 64 || !SKILL_NAME.test(name))
+    throw new Error(
+      "Skill name must use lowercase letters, numbers, and single hyphens (max 64 characters).",
+    );
+  if (!description) throw new Error("Add a short description so the agent knows when to use it.");
+  if (description.length > 1024) throw new Error("Description must be 1024 characters or fewer.");
+  if (!instructions) throw new Error("Add the instructions the agent should follow.");
+  return { name, description, instructions };
+}
+
+// Agent Skills format: YAML frontmatter (name, description) followed by Markdown instructions.
+export function formatSkillFile(draft: SkillDraft): string {
+  return `---\nname: ${draft.name}\ndescription: ${JSON.stringify(draft.description)}\n---\n\n${draft.instructions}\n`;
+}
+
+function skillBody(content: string): string {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+}
+
+function assertSkillsEditable(sessionId: string): void {
+  const resource = sessionResources().find(({ id }) => id === sessionId);
+  if (!resource) throw new Error("Session resources are not loaded.");
+  if (resource.session.isStreaming || getActiveAgentRun(sessionId))
+    throw new Error("Stop the agent before changing skills.");
+}
+
+async function reloadIdleSessions(): Promise<void> {
+  for (const loaded of sessionResources()) {
+    if (!loaded.session.isStreaming && !getActiveAgentRun(loaded.id)) await loaded.session.reload();
+  }
+}
+
+export function readSkill(sessionId: string, path: string): SkillDraft {
+  const state = listSkills(sessionId);
+  const skill = [...state.skills, ...(state.disabledSkills ?? [])].find(
+    (entry) => entry.path === path,
+  );
+  if (!skill || !isManagedSkill(path)) throw new Error("This skill cannot be edited here.");
+  return {
+    name: skill.name,
+    description: skill.description,
+    instructions: skillBody(readFileSync(path, "utf8")),
+  };
+}
+
+export async function createSkill(sessionId: string, input: SkillDraft): Promise<SkillState> {
+  assertSkillsEditable(sessionId);
+  const draft = validateSkillDraft(input);
+  const file = managedSkillFile(draft.name);
+  if (existsSync(file)) throw new Error(`A skill named "${draft.name}" already exists.`);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, formatSkillFile(draft), { flag: "wx" });
+  await reloadIdleSessions();
+  return listSkills(sessionId);
+}
+
+export async function updateSkill(
+  sessionId: string,
+  path: string,
+  input: Pick<SkillDraft, "description" | "instructions">,
+): Promise<SkillState> {
+  assertSkillsEditable(sessionId);
+  if (!isManagedSkill(path) || !existsSync(path))
+    throw new Error("This skill cannot be edited here.");
+  const draft = validateSkillDraft({ ...input, name: basename(dirname(resolve(path))) });
+  writeFileSync(path, formatSkillFile(draft));
+  await reloadIdleSessions();
+  return listSkills(sessionId);
+}
+
+export async function deleteSkill(sessionId: string, path: string): Promise<SkillState> {
+  assertSkillsEditable(sessionId);
+  if (!isManagedSkill(path)) throw new Error("This skill cannot be deleted here.");
+  rmSync(dirname(resolve(path)), { recursive: true, force: true });
+  const preferences = desktopPreferences();
+  if (preferences.disabledSkillPaths?.includes(path)) {
+    preferences.disabledSkillPaths = preferences.disabledSkillPaths.filter(
+      (entry) => entry !== path,
+    );
+    saveDesktopPreferences();
+  }
+  await reloadIdleSessions();
   return listSkills(sessionId);
 }
