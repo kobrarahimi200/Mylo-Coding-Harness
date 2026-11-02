@@ -1,6 +1,10 @@
 import { IconChevronRight, IconFile, IconFolder, IconSearch } from "@tabler/icons-react";
 import { useEffect, useRef, useState } from "react";
 import type { FileEntry, SkillInfo } from "../../../../shared/contracts";
+import { createCoalescedRunner, directoriesToRefresh } from "./refresh-scheduler";
+
+const REFRESH_DELAY_MS = 750;
+
 export function ProjectExplorer({
   cwd,
   sessionId,
@@ -33,40 +37,58 @@ export function ProjectExplorer({
       return;
     }
     let active = true;
-    const load = () => {
-      void window.modus.files
+    const fail = (e: unknown) => {
+      if (active) setError(String(e));
+    };
+    const listRoot = () =>
+      window.modus.files
         .list({ cwd })
         .then((next) => {
           if (active) setEntries(next);
         })
-        .catch((e: unknown) => {
-          if (active) setError(String(e));
-        });
-      for (const dir of Object.keys(childrenRef.current))
-        void window.modus.files
-          .list({ cwd, dir })
-          .then((next) => {
-            if (active) setChildren((current) => ({ ...current, [dir]: next }));
-          })
-          .catch((e: unknown) => {
-            if (active) setError(String(e));
-          });
-      if (window.modus.git.changes)
-        void window.modus.git
-          .changes(cwd)
-          .then((next) => {
-            if (active) setChanges(Object.fromEntries(next.map((c) => [c.path, c.status])));
-          })
-          .catch((e: unknown) => {
-            if (active) setError(String(e));
-          });
-    };
-    load();
+        .catch(fail);
+    const listDir = (dir: string) =>
+      window.modus.files
+        .list({ cwd, dir })
+        .then((next) => {
+          if (active) setChildren((current) => ({ ...current, [dir]: next }));
+        })
+        .catch(fail);
+    const loadChanges = () =>
+      window.modus.git.changes
+        ? window.modus.git
+            .changes(cwd)
+            .then((next) => {
+              if (active) setChanges(Object.fromEntries(next.map((c) => [c.path, c.status])));
+            })
+            .catch(fail)
+        : Promise.resolve();
+    void listRoot();
+    void loadChanges();
+    // Filesystem bursts are merged: one refresh per window, touching only changed listings.
+    let pendingPaths: string[] = [];
+    let fullRefresh = false;
+    const runner = createCoalescedRunner(async () => {
+      const paths = pendingPaths;
+      const everything = fullRefresh || paths.length === 0;
+      pendingPaths = [];
+      fullRefresh = false;
+      const { root, dirs } = directoriesToRefresh(
+        everything ? [] : paths,
+        cwd,
+        Object.keys(childrenRef.current),
+      );
+      await Promise.all([root ? listRoot() : undefined, ...dirs.map(listDir), loadChanges()]);
+    }, REFRESH_DELAY_MS);
     const stop = window.modus.files.onChanged((e) => {
-      if (e.cwd.replaceAll("\\", "/") === cwd.replaceAll("\\", "/")) load();
+      if (e.cwd.replaceAll("\\", "/") !== cwd.replaceAll("\\", "/")) return;
+      if (e.paths.length === 0) fullRefresh = true;
+      else pendingPaths.push(...e.paths);
+      runner.request();
     });
     return () => {
       active = false;
+      runner.cancel();
       stop();
     };
   }, [cwd]);

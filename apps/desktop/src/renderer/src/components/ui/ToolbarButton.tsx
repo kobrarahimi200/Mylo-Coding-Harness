@@ -7,12 +7,14 @@ export const TOOLBAR_ICON = { size: 15, stroke: 1.5 } as const;
 type ToolbarButtonProps = ComponentPropsWithRef<"button"> & {
   label: string;
   active?: boolean;
+  current?: boolean;
 };
 
 export function ToolbarButton({
   children,
   label,
   active = false,
+  current = false,
   className,
   ...props
 }: ToolbarButtonProps) {
@@ -21,13 +23,15 @@ export function ToolbarButton({
       <button
         {...props}
         aria-label={label}
+        aria-current={current ? "page" : undefined}
         aria-pressed={active || undefined}
         className={cn(
           "toolbar-icon-button app-no-drag inline-flex shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover disabled:pointer-events-none disabled:opacity-40",
-          active && "bg-active",
+          (active || current) && "bg-active",
           className,
         )}
-        data-active={active}
+        data-active={active || current}
+        data-current={current || undefined}
         type={props.type ?? "button"}
       >
         {children}

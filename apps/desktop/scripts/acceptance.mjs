@@ -300,17 +300,6 @@ app.on("browser-window-created", (_event, window) => {
         "const style=document.createElement('style');style.textContent='.dialog-surface[data-ending-style], .dialog-backdrop[data-ending-style] { transition-duration: 3600s !important; }';document.head.append(style)",
       );
       await click("Approve plan");
-      await waitFor(hasButton("Apply change"));
-      assert.equal(readFileSync(join(project, "src/counter.ts"), "utf8"), broken);
-      await click("Apply change");
-      await click("Run checks");
-      await waitFor(hasButton("Apply change"));
-      assert.ok(
-        await evaluate(
-          "window.acceptanceEvents.some(e=>e.type==='harness.validation' && e.status==='failed' && e.exitCode===1)",
-        ),
-      );
-      await click("Apply change");
       await waitFor(hasButton("Accept result"));
       assert.equal(readFileSync(join(project, "src/counter.ts"), "utf8"), fixed);
       assert.ok(

@@ -159,3 +159,21 @@
 .field-control::placeholder {
   color: var(--color-fg-placeholder);
 }
+
+.toolbar-icon-button.rail-button {
+  position: relative;
+}
+.toolbar-icon-button.rail-button[data-current="true"] {
+  background: var(--color-active);
+  color: var(--color-accent);
+}
+.toolbar-icon-button.rail-button[data-current="true"]::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-accent);
+}

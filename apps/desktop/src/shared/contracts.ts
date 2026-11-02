@@ -442,6 +442,12 @@ export type ModelInfo = {
   providerName?: string;
   name: string;
   available: boolean;
+  /** Why the model cannot be used right now; present only when `available` is false. */
+  unavailableReason?: string;
+  /** Measured round-trip of a real connection test on this machine, in milliseconds. */
+  latencyMs?: number;
+  /** True only when `latencyMs` was measured and is within the documented fast threshold. */
+  fast?: boolean;
   contextWindow?: number;
   maxTokens?: number;
   supportsThinking: boolean;
@@ -479,6 +485,8 @@ export type ModelSettingsState = {
   providers: ModelProviderInfo[];
   models: ModelInfo[];
   defaultModel?: string;
+  /** Optional per-mode default models; unset modes use `defaultModel`. */
+  modeModels?: { ask?: string; agent?: string };
 };
 
 /* ── Workspace files (file panel) ──────────────────────────────────────── */

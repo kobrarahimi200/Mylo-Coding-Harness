@@ -2,7 +2,7 @@ import { Combobox } from "@base-ui/react/combobox";
 import { Menu } from "@base-ui/react/menu";
 import { IconCheck, IconChevronDown } from "@tabler/icons-react";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
-import { type RefObject, useImperativeHandle, useRef } from "react";
+import { type RefObject, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { ModelInfo } from "../../../../shared/contracts";
 import { ProviderLogo } from "../../components/providers/ProviderLogo";
 import {
@@ -10,6 +10,20 @@ import {
   selectedThinkingLabel,
   selectedThinkingOption,
 } from "../../lib/modelThinking";
+
+export type ModelFilter = "all" | "available" | "fast";
+
+const MODEL_FILTERS: { id: ModelFilter; label: string; title: string }[] = [
+  { id: "all", label: "All", title: "Every configured model" },
+  { id: "available", label: "Available", title: "Models you can use now" },
+  { id: "fast", label: "Fast", title: "Models measured fast in a connection test" },
+];
+
+export function filterModels(models: ModelInfo[], filter: ModelFilter): ModelInfo[] {
+  if (filter === "available") return models.filter((model) => model.available);
+  if (filter === "fast") return models.filter((model) => model.available && model.fast === true);
+  return models;
+}
 
 export function ModelSelect({
   model,
@@ -25,11 +39,13 @@ export function ModelSelect({
   const current = models.find((item) => item.id === model);
   const thinkingOptions = current ? modelThinkingOptions(current) : [];
   const thinkingSelection = current ? selectedThinkingOption(current) : undefined;
+  const [filter, setFilter] = useState<ModelFilter>("all");
+  const visible = useMemo(() => filterModels(models, filter), [models, filter]);
   const virtualizerRef = useRef<Virtualizer<HTMLDivElement, HTMLDivElement>>(null);
   return (
     <div className="flex min-w-0 items-center gap-1">
       <Combobox.Root
-        items={models}
+        items={visible}
         virtualized
         onItemHighlighted={(item, details) => {
           if (item && details.reason !== "pointer") {
@@ -64,6 +80,21 @@ export function ModelSelect({
                 placeholder="Search models"
                 className="search-control px-3"
               />
+              <fieldset className="m-0 flex gap-1 border-0 px-3 pb-1">
+                <legend className="sr-only">Model filter</legend>
+                {MODEL_FILTERS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    aria-pressed={filter === entry.id}
+                    title={entry.title}
+                    onClick={() => setFilter(entry.id)}
+                    className="rounded-md px-2 py-0.5 text-xs text-fg-subtle hover:bg-hover aria-pressed:bg-active aria-pressed:text-fg"
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </fieldset>
               <Combobox.Empty>
                 <div className="p-4 text-sm text-fg-subtle">No matching models</div>
               </Combobox.Empty>
@@ -146,10 +177,23 @@ function ModelOptions({
               />
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{item.name}</span>
-                <span className="block truncate text-xs text-fg-subtle">
-                  {item.providerName ?? item.provider}
+                <span
+                  className="block truncate text-xs text-fg-subtle"
+                  title={item.unavailableReason}
+                >
+                  {item.available
+                    ? (item.providerName ?? item.provider)
+                    : (item.unavailableReason ?? "Unavailable")}
                 </span>
               </span>
+              {item.fast ? (
+                <span
+                  className="shrink-0 rounded bg-hover px-1 text-[10px] text-fg-subtle"
+                  title={`Measured ${item.latencyMs} ms in a connection test`}
+                >
+                  Fast
+                </span>
+              ) : null}
               <span className="flex w-4 shrink-0 justify-center">
                 <Combobox.ItemIndicator>
                   <IconCheck size={15} />

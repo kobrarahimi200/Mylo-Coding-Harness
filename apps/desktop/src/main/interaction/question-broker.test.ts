@@ -38,6 +38,24 @@ describe("question-broker", () => {
     ).toBe(true);
   });
 
+  it("ignores a duplicated response and keeps the first answer", async () => {
+    const events: AgentEvent[] = [];
+    const pending = requestQuestions({
+      sessionId: "session-1",
+      questions: QUESTIONS,
+      emit: (event) => events.push(event),
+    });
+    const requested = events.find((event) => event.type === "question.requested");
+    if (requested?.type !== "question.requested") throw new Error("missing request");
+    const id = requested.request.id;
+    const first = resolveQuestionRequest(id, [{ questionId: "q1", selected: ["Side"] }], false);
+    const second = resolveQuestionRequest(id, [], true);
+    expect(first).toBeDefined();
+    expect(second).toBeUndefined();
+    await expect(pending).resolves.toMatchObject({ skipped: false });
+    expect(events.filter((event) => event.type === "question.resolved")).toHaveLength(1);
+  });
+
   it("a skip discards answers and resolves as skipped", async () => {
     const events: AgentEvent[] = [];
     const pending = requestQuestions({

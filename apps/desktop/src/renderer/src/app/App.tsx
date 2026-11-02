@@ -9,6 +9,11 @@ import type {
 } from "../../../shared/contracts";
 import type { AgentMode } from "../../../shared/harness";
 import { NavigationRail } from "../components/layout/NavigationRail";
+import {
+  currentRailSection,
+  navigateRail,
+  type RailSection,
+} from "../components/layout/navigation";
 import { usePanelLayout } from "../components/layout/usePanelLayout";
 import { SIDEBAR_TRANSITION, Sidebar } from "../components/Sidebar";
 import { ImageViewerProvider } from "../components/ui/ImageViewer";
@@ -143,7 +148,7 @@ export function App() {
     reloadConfiguration,
     changeDefaultModel,
     updateModelThinking,
-  } = useModels(activeSession, refreshSessions, updateSession);
+  } = useModels(activeSession, refreshSessions, updateSession, heroMode);
   const {
     showSidebar,
     setSidebarOpen,
@@ -159,6 +164,20 @@ export function App() {
     sidebarMaxWidth,
     inspectorMaxWidth,
   } = usePanelLayout(Boolean(activeWorkspace), panels.reservedWidth);
+  function navigateFromRail(section: RailSection) {
+    if (section === "settings") return openProviderSettings();
+    const next = navigateRail(
+      { settingsOpen, workspacePanel, bottomTab, sidebarOpen: responsiveSidebarOpen },
+      section,
+    );
+    setSettingsOpen(next.settingsOpen);
+    setWorkspacePanel(next.workspacePanel);
+    setBottomTab(next.bottomTab);
+    if (section === "projects") {
+      if (next.sidebarOpen) showSidebar();
+      else setSidebarOpen(false);
+    }
+  }
   const [inspectorTab, setInspectorTab] = useState("files");
   const [filesRevealPath, setFilesRevealPath] = useState<string | undefined>();
   useInitialHydration({
@@ -358,19 +377,10 @@ export function App() {
 
               <div className="flex min-h-0 min-w-0 flex-1 bg-chrome">
                 <NavigationRail
-                  settingsOpen={settingsOpen}
+                  current={currentRailSection({ settingsOpen, workspacePanel, bottomTab })}
+                  sidebarOpen={responsiveSidebarOpen && !settingsOpen}
                   hasWorkspace={Boolean(activeWorkspace)}
-                  onNavigate={(section) => {
-                    setSettingsOpen(false);
-                    if (section === "projects") showSidebar();
-                    else if (section === "tests") setBottomTab("tests");
-                    else setWorkspacePanel(section === "history" ? "timeline" : section);
-                  }}
-                  onHome={() => {
-                    setSettingsOpen(false);
-                    setWorkspacePanel("chat");
-                  }}
-                  onSettings={openProviderSettings}
+                  onNavigate={navigateFromRail}
                 />
                 <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-tl-xl border border-hairline bg-canvas">
                   <Activity mode={settingsOpen ? "visible" : "hidden"}>

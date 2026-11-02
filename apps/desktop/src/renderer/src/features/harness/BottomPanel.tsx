@@ -54,29 +54,35 @@ export function BottomPanel({
         }}
       />
       <div className="flex h-8 shrink-0 items-center gap-4 border-b border-hairline px-4">
-        {["terminal", "tests", "logs", "problems"].map((name) => (
-          <button
-            type="button"
-            key={name}
-            onClick={() => onTabChange(name)}
-            className={`text-xs capitalize ${tab === name ? "text-accent" : "text-fg-faint"}`}
-          >
-            {name === "logs" ? "Agent Logs" : name}
+        <div role="tablist" aria-label="Output tabs" className="flex items-center gap-4">
+          {["terminal", "tests", "logs", "problems"].map((name) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === name}
+              key={name}
+              onClick={() => onTabChange(name)}
+              className={`border-b-2 text-xs capitalize transition-colors ${tab === name ? "border-accent text-accent" : "border-transparent text-fg-faint hover:text-fg"}`}
+            >
+              {name === "logs" ? "Agent Logs" : name}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          {tab === "tests" ? (
+            <button
+              type="button"
+              className="text-xs text-accent disabled:opacity-40"
+              disabled={!canRunChecks}
+              onClick={onRunChecks}
+            >
+              Run checks
+            </button>
+          ) : null}
+          <button type="button" className="text-xs" onClick={() => onTabChange("")}>
+            Hide
           </button>
-        ))}
-        {tab === "tests" ? (
-          <button
-            type="button"
-            className="ml-auto text-xs text-accent disabled:opacity-40"
-            disabled={!canRunChecks}
-            onClick={onRunChecks}
-          >
-            Run checks
-          </button>
-        ) : null}
-        <button type="button" className="ml-auto text-xs" onClick={() => onTabChange("")}>
-          Hide
-        </button>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "terminal" ? (

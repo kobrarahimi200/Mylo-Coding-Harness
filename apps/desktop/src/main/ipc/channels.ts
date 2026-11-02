@@ -81,6 +81,7 @@ export const IPC_CHANNELS = {
   questionsRespond: "questions:respond",
   modelList: "model:list",
   modelSetDefault: "model:set-default",
+  modelSetModeDefault: "model:set-mode-default",
   modelSettings: "model:settings",
   modelCatalogChanged: "model:catalog-changed",
   modelProviderDetail: "model:provider-detail",

@@ -73,6 +73,11 @@ export const agentPromptSchema = z
 
 export const sessionIdSchema = nonEmptyString;
 
+export const modeModelSchema = z.object({
+  mode: z.enum(["ask", "agent"]),
+  model: nonEmptyString.optional(),
+});
+
 export const agentNavigateSchema = z.object({
   sessionId: nonEmptyString,
   userMessageId: nonEmptyString,

@@ -12,11 +12,14 @@ import { IPC_CHANNELS } from "../ipc/channels";
  */
 
 const DEBOUNCE_MS = 300;
+/** A continuous write stream still flushes at least this often. */
+const MAX_WAIT_MS = 1500;
 
 type WatchEntry = {
   refCount: number;
   watcher: FSWatcher | undefined;
   timer: ReturnType<typeof setTimeout> | undefined;
+  burstStartedAt: number | undefined;
   /** Absolute paths coalesced in the current burst (empty ⇒ full refresh). */
   pendingPaths: Set<string>;
   root: string;
@@ -45,15 +48,19 @@ function isNoise(absPath: string, root: string): boolean {
 }
 
 function scheduleFlush(entry: WatchEntry): void {
+  const now = Date.now();
+  entry.burstStartedAt ??= now;
   if (entry.timer) {
     clearTimeout(entry.timer);
   }
+  const wait = Math.max(0, Math.min(DEBOUNCE_MS, entry.burstStartedAt + MAX_WAIT_MS - now));
   entry.timer = setTimeout(() => {
     entry.timer = undefined;
+    entry.burstStartedAt = undefined;
     const paths = [...entry.pendingPaths];
     entry.pendingPaths.clear();
     emitFilesEvent({ cwd: entry.root, paths });
-  }, DEBOUNCE_MS);
+  }, wait);
 }
 
 /** Begin watching `cwd` (ref-counted). Returns the resolved absolute root. */
@@ -69,6 +76,7 @@ export function watchWorkspace(cwd: string): string {
     refCount: 1,
     watcher: undefined,
     timer: undefined,
+    burstStartedAt: undefined,
     pendingPaths: new Set(),
     root,
   };

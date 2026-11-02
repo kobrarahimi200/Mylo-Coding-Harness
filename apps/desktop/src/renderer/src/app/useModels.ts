@@ -5,10 +5,15 @@ export function useModels(
   activeSession: AgentSessionInfo | undefined,
   refreshSessions: () => Promise<void>,
   updateSession: (session: AgentSessionInfo) => void,
+  heroMode?: "ask" | "plan" | "agent",
 ) {
   const [modelSettings, setModelSettings] = useState<ModelSettingsState | null>(null);
   const applyModelSettings = setModelSettings;
-  const model = activeSession ? (activeSession.model ?? "") : (modelSettings?.defaultModel ?? "");
+  const modeKey = heroMode === "ask" ? "ask" : heroMode === "agent" ? "agent" : undefined;
+  const modeModel = modeKey ? modelSettings?.modeModels?.[modeKey] : undefined;
+  const model = activeSession
+    ? (activeSession.model ?? "")
+    : (modeModel ?? modelSettings?.defaultModel ?? "");
 
   const refreshModelSettings = useCallback(async (): Promise<void> => {
     const settings = await window.modus.model.settings();
@@ -51,10 +56,18 @@ export function useModels(
         model: nextModel,
       });
       updateSession(session);
+    } else if (modeKey && modeModel) {
+      await window.modus.model.setModeDefault({ mode: modeKey, model: nextModel });
+      await refreshModelSettings();
     } else {
       await window.modus.model.setDefault(nextModel);
       await refreshModelSettings();
     }
+  }
+
+  async function changeModeDefault(mode: "ask" | "agent", nextModel?: string): Promise<void> {
+    await window.modus.model.setModeDefault(nextModel ? { mode, model: nextModel } : { mode });
+    await refreshModelSettings();
   }
 
   async function updateModelThinking(modelId: string, thinkingVariant: string): Promise<void> {
@@ -100,6 +113,7 @@ export function useModels(
     applyModelSettings,
     reloadConfiguration,
     changeDefaultModel,
+    changeModeDefault,
     updateModelThinking,
   };
 }

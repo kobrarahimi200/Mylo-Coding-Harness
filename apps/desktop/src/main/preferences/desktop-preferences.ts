@@ -6,6 +6,8 @@ import type { BrowserRecentInfo, WorkspaceInfo } from "../../shared/contracts";
 export type DesktopPreferences = {
   hiddenWorkspaceRoots?: string[];
   disabledSkillPaths?: string[];
+  modeModels?: { ask?: string; agent?: string };
+  modelLatency?: Record<string, { ms: number; measuredAt: string }>;
   workspaces: (WorkspaceInfo & { pinnedAt?: string })[];
   sessions: Record<string, { pinnedAt?: string }>;
   browserRecents: BrowserRecentInfo[];

@@ -22,11 +22,13 @@
 
 ## About
 
-Modus is an open-source desktop app for running AI coding agents inside real local projects.
+Mylo Coding Harness (the app is still named Modus in code and some assets) is an open-source desktop app for running AI coding agents inside real local projects.
 
 Open a workspace, connect your PI model provider, chat with PI, and inspect your project in one window.
 
-Modus is early and currently runs best from source.
+Mylo Coding Harness is early and currently runs best from source.
+
+**Attribution:** this project is derived from [Modus by brandlll-lee](https://github.com/brandlll-lee/modus), licensed under Apache-2.0. The original license is preserved in [LICENSE](./LICENSE).
 
 ## Features
 
@@ -47,8 +49,8 @@ Requirements for Windows and macOS:
 - Git
 
 ```bash
-git clone https://github.com/brandlll-lee/modus.git
-cd modus
+git clone https://github.com/kobrarahimi200/Mylo-Coding-Harness.git
+cd Mylo-Coding-Harness
 npm install
 npm run dev
 ```
@@ -105,6 +107,62 @@ Contributions are welcome. Keep PRs small, use Conventional Commits, and run `np
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE).
+
+## Navigation
+
+The left rail has one highlighted current page (`aria-current="page"`):
+
+| Icon | Behavior |
+| --- | --- |
+| Projects | Toggles the project sidebar (pressed state, not a page) |
+| Chat | Chat view; the single place to start a task |
+| File Explorer | File tree and editor (needs an open project) |
+| Skills | Skill management (needs an open project) |
+| Tests | Toggles the bottom Tests panel |
+| History | Run timeline (needs an open project) |
+| Settings | Settings page |
+
+Navigating to a view closes the Tests tab so no panel is left covering the content. Behavior is covered by `navigation.test.ts` and `NavigationRail.test.tsx`.
+
+## Model setup and selection
+
+- Configure providers in **Settings → Models and providers**. Credentials stay in Pi's own `auth.json` / `models.json`; Mylo does not copy them.
+- The model picker lists every model Pi knows. Models you cannot use are shown disabled with a reason (missing credentials, or not in the signed-in ChatGPT account's catalog).
+- Search by name or provider, and filter by **All / Available / Fast**.
+- **Fast** is never inferred from names or hardcoded IDs. A model is marked Fast only after **Test connection** measured a completion at or below 2.5 s on this machine; the measurement is stored locally.
+- Settings can store a separate default model for **Ask** and **Agent** mode. They apply to new chats started from the home composer; models inside an existing chat change only manually.
+- Thinking levels (including Off/Low) appear only for models whose Pi metadata supports them.
+
+## Performance notes
+
+Changes: the project explorer coalesces filesystem-watch events (750 ms trailing window, max 1.5 s in the watcher) and refreshes only expanded folders that contain a changed path; agent events are batched into one React update per 32 ms without dropping any event.
+
+Measured with `npm run perf:probe -w apps/desktop` (real Electron, loopback fake model, single runs on a busy development Mac, so treat as indicative only):
+
+| Scenario | Before | After |
+| --- | --- | --- |
+| 12 writes, 400 ms apart, into 1 of 3 expanded folders: `files:list` calls | 60 | 18 |
+| Same: `git:changes` calls | 12 | 6 |
+| 60 writes at 25 ms (dense burst): `files:list` calls | 2 | 3 |
+| Startup, first interactive render, streaming frame gaps, session switch | unchanged within noise | unchanged within noise |
+
+The dense burst is slightly worse because of the max-wait flush that guarantees updates during continuous writes. Duplicate `agent:event` listeners (agent view and harness view) and a second file listing in the Files panel are not yet deduplicated.
+
+## Testing
+
+```bash
+npm run check          # biome + typecheck
+npm run test           # vitest
+npm run test:smoke -w apps/desktop       # real Electron smoke (macOS)
+npm run test:acceptance -w apps/desktop  # real Electron acceptance (macOS)
+```
+
+## Known issues and limits
+
+- Windows: the real-Electron smoke/acceptance runners are macOS-only. WSL2 isolation requires a prepared self-hosted runner; hosted CI alone does not prove it.
+- Run state is held in memory; a task interrupted by quitting the app is shown as cancelled on reopen, not resumed.
+- Model speed has no verified provider metadata; Fast requires a local connection test.
+- Performance figures above come from single runs and are not a benchmark suite.
 
 ## Mylo harness workflow
 

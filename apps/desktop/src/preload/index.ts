@@ -151,6 +151,7 @@ const api: ModusApi = {
     },
     list: () => ipcRenderer.invoke("model:list"),
     setDefault: (model) => ipcRenderer.invoke("model:set-default", model),
+    setModeDefault: (input) => ipcRenderer.invoke("model:set-mode-default", input),
     settings: () => ipcRenderer.invoke("model:settings"),
     onCatalogChanged: (callback) => {
       const listener = () => callback();

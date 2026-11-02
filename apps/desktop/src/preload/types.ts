@@ -221,6 +221,7 @@ export type ModusApi = {
     ): Promise<import("../shared/provider-auth").ProviderConnectionResult>;
     list(): Promise<ModelInfo[]>;
     setDefault(model: string): Promise<void>;
+    setModeDefault(input: { mode: "ask" | "agent"; model?: string }): Promise<void>;
     settings(): Promise<ModelSettingsState>;
     onCatalogChanged(callback: () => void): () => void;
     providerDetail(provider: string): Promise<ModelProviderDetail | undefined>;

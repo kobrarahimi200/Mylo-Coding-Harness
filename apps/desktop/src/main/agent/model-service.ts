@@ -17,9 +17,13 @@ import type {
   ThinkingOption,
 } from "../../shared/contracts";
 import { classifyFailure, type TaskFailure } from "../../shared/task-failure";
+import { desktopPreferences, saveDesktopPreferences } from "../preferences/desktop-preferences";
 import { getPiCliAgentDir } from "./agent-paths";
 import { createAgentSettings } from "./agent-settings";
 import { diagnoseModelSelection, logProviderFailure } from "./model-diagnostics";
+
+/** A measured "Reply with OK." round trip at or under this is labelled fast. */
+export const FAST_LATENCY_MS = 2500;
 
 let initialization: Promise<ModelRuntime> | undefined;
 let modelRuntimeSnapshot: ModelRuntime | undefined;
@@ -106,10 +110,33 @@ export function resolveModelThinking(
   return { model, thinkingLevel: selected.level, variant: selected.value };
 }
 
+export function unavailableReason(model: Model<Api>): string | undefined {
+  if (!accountAllowsModel(model)) return "Not included in this ChatGPT account's model catalog.";
+  if (!getModelRegistry().hasConfiguredAuth(model))
+    return `No credentials for ${getModelRegistry().getProviderDisplayName(model.provider)}. Connect the provider in Settings.`;
+  return undefined;
+}
+
+export function modelSpeed(latencyMs: number | undefined): { latencyMs?: number; fast?: boolean } {
+  return latencyMs === undefined ? {} : { latencyMs, fast: latencyMs <= FAST_LATENCY_MS };
+}
+
+function recordModelLatency(reference: string, ms: number): void {
+  const preferences = desktopPreferences();
+  preferences.modelLatency = {
+    ...preferences.modelLatency,
+    [reference]: { ms: Math.round(ms), measuredAt: new Date().toISOString() },
+  };
+  saveDesktopPreferences();
+}
+
 function modelToInfo(model: Model<Api>, settings: SettingsManager): ModelInfo {
   const thinking = resolveModelThinking(model, undefined, settings);
   const options = thinkingOptions(model);
+  const reason = unavailableReason(model);
   return {
+    ...(reason ? { unavailableReason: reason } : {}),
+    ...modelSpeed(desktopPreferences().modelLatency?.[modelToId(model)]?.ms),
     id: modelToId(model),
     provider: model.provider,
     providerName: getModelRegistry().getProviderDisplayName(model.provider),
@@ -117,7 +144,7 @@ function modelToInfo(model: Model<Api>, settings: SettingsManager): ModelInfo {
       model.provider === "openai" && modelRuntimeSnapshot?.isUsingOAuth("openai")
         ? (chatGPTModels?.get(model.id) ?? model.name)
         : model.name,
-    available: getModelRegistry().hasConfiguredAuth(model),
+    available: !reason,
     contextWindow: model.contextWindow,
     maxTokens: model.maxTokens,
     supportsThinking: model.reasoning,
@@ -135,6 +162,20 @@ export function listModels(settings = createAgentSettings()): ModelInfo[] {
     .filter(accountAllowsModel)
     .map((model) => modelToInfo(model, settings))
     .sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+}
+
+/** Every registered model, available ones first, each unavailable one carrying its reason. */
+export function listAllModels(settings = createAgentSettings()): ModelInfo[] {
+  if (!registry) return [];
+  return getModelRegistry()
+    .getAll()
+    .map((model) => modelToInfo(model, settings))
+    .sort(
+      (a, b) =>
+        Number(b.available) - Number(a.available) ||
+        a.provider.localeCompare(b.provider) ||
+        a.name.localeCompare(b.name),
+    );
 }
 
 export function getModelInfo(reference: string | undefined): ModelInfo | undefined {
@@ -175,7 +216,7 @@ export function getProviderDetail(provider: string): ModelProviderDetail | undef
         authMethods: providerAuthMethods(provider),
         models: getModelRegistry()
           .getAll()
-          .filter((model) => model.provider === provider && accountAllowsModel(model))
+          .filter((model) => model.provider === provider)
           .map((model) => modelToInfo(model, settings)),
       }
     : undefined;
@@ -184,11 +225,17 @@ export function getProviderDetail(provider: string): ModelProviderDetail | undef
 export function getModelSettings(): ModelSettingsState {
   if (!registry) return { models: [], providers: [], errors: refreshErrors };
   const settings = createAgentSettings();
-  const models = listModels(settings);
-  const defaultModel = getDefaultModelId(models, settings);
+  const models = listAllModels(settings);
+  const availableModels = models.filter((model) => model.available);
+  const defaultModel = getDefaultModelId(availableModels, settings);
   const error = getModelRegistry().getError();
+  const configured = desktopPreferences().modeModels ?? {};
+  const modeModels = Object.fromEntries(
+    Object.entries(configured).filter(([, id]) => availableModels.some((model) => model.id === id)),
+  );
   return {
     models,
+    ...(Object.keys(modeModels).length ? { modeModels } : {}),
     providers: listProviders(),
     ...(defaultModel ? { defaultModel } : {}),
     errors: [...refreshErrors, ...(error ? [error] : [])],
@@ -234,6 +281,22 @@ export async function setDefaultModel(reference: string | undefined): Promise<vo
   const settings = createAgentSettings();
   settings.setDefaultModelAndProvider(model.provider, model.id);
   await settings.flush();
+}
+
+export async function setModeModel(
+  mode: "ask" | "agent",
+  reference: string | undefined,
+): Promise<void> {
+  if (reference !== undefined) {
+    const model = findModel(reference);
+    if (!model || unavailableReason(model)) throw new Error(`Model is not available: ${reference}`);
+  }
+  const preferences = desktopPreferences();
+  const next = { ...preferences.modeModels };
+  if (reference === undefined) delete next[mode];
+  else next[mode] = reference;
+  preferences.modeModels = next;
+  saveDesktopPreferences();
 }
 
 export async function setModelThinking(input: {
@@ -314,6 +377,7 @@ export async function testModelConnection(
   const model = findModel(reference);
   if (!model) return failed(classifyFailure("Model is not registered in the provider catalog."));
   try {
+    const startedAt = performance.now();
     const response = await runtime.completeSimple(
       model,
       { messages: [{ role: "user", content: "Reply with OK.", timestamp: Date.now() }] },
@@ -326,6 +390,7 @@ export async function testModelConnection(
         classifyFailure(response.stopReason === "aborted" ? `Timed out: ${message}` : message),
       );
     }
+    recordModelLatency(reference, performance.now() - startedAt);
     return { ok: true, message: `Received a response from ${reference}.` };
   } catch (error) {
     logProviderFailure("test-connection", reference, error);

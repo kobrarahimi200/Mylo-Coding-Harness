@@ -69,13 +69,11 @@ export function WorkspaceHeader({
           {!models.some((m) => m.id === model) ? (
             <option value={model}>{model || "Connect a model"}</option>
           ) : null}
-          {models
-            .filter((m) => m.available)
-            .map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
+          {models.map((m) => (
+            <option key={m.id} value={m.id} disabled={!m.available} title={m.unavailableReason}>
+              {m.available ? m.name : `${m.name} (unavailable)`}
+            </option>
+          ))}
         </select>
         {busy ? (
           <button type="button" className="mylo-button is-danger" onClick={onStop}>

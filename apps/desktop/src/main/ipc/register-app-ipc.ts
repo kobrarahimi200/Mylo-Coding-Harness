@@ -30,6 +30,7 @@ import {
   revealProviderConfig,
   setDefaultModel,
   setModelThinking,
+  setModeModel,
   testModelConnection,
 } from "../agent/model-service";
 import {
@@ -135,6 +136,7 @@ import {
   filesWriteSchema,
   gitCheckoutSchema,
   mcpCommandSchema,
+  modeModelSchema,
   parseIpcInput,
   previewReadSchema,
   promptImageAttachmentSchema,
@@ -901,6 +903,14 @@ export function registerAppIpc({
   ipcMain.handle(IPC_CHANNELS.modelSetDefault, async (event, model: string) => {
     assertTrustedSender(event);
     await setDefaultModel(parseIpcInput(sessionIdSchema, model, IPC_CHANNELS.modelSetDefault));
+    for (const window of BrowserWindow.getAllWindows())
+      if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.modelCatalogChanged);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.modelSetModeDefault, async (event, input) => {
+    assertTrustedSender(event);
+    const parsed = parseIpcInput(modeModelSchema, input, IPC_CHANNELS.modelSetModeDefault);
+    await setModeModel(parsed.mode, parsed.model);
     for (const window of BrowserWindow.getAllWindows())
       if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.modelCatalogChanged);
   });

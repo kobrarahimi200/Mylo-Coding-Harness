@@ -53,6 +53,14 @@ export function toHexColor(value: string): string | undefined {
   if (!value) {
     return undefined;
   }
+  const short = value.match(/^#([0-9a-f])([0-9a-f])([0-9a-f])([0-9a-f])?$/i);
+  if (short) {
+    return `#${short
+      .slice(1)
+      .filter(Boolean)
+      .map((digit) => digit.repeat(2))
+      .join("")}`;
+  }
   if (value.startsWith("#")) {
     return value;
   }

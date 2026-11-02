@@ -42,6 +42,7 @@ export function ProviderSettingsPanel({
           Configured only
         </label>
       </div>
+      <ModeDefaults state={state} />
       {state?.errors.map((message) => (
         <p role="alert" key={message} className="break-words text-sm text-danger">
           {message}
@@ -91,5 +92,36 @@ export function ProviderSettingsPanel({
         />
       ) : null}
     </>
+  );
+}
+
+function ModeDefaults({ state }: { state: ModelSettingsState | null }) {
+  const available = (state?.models ?? []).filter((model) => model.available);
+  if (!available.length) return null;
+  return (
+    <fieldset className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-fg-muted">
+      <legend className="sr-only">Default model per mode</legend>
+      {(["ask", "agent"] as const).map((mode) => (
+        <label key={mode} className="flex items-center gap-2">
+          {mode === "ask" ? "Ask mode" : "Agent mode"}
+          <select
+            aria-label={`${mode === "ask" ? "Ask" : "Agent"} mode default model`}
+            value={state?.modeModels?.[mode] ?? ""}
+            onChange={(event) =>
+              void window.modus.model.setModeDefault(
+                event.target.value ? { mode, model: event.target.value } : { mode },
+              )
+            }
+          >
+            <option value="">Use general default</option>
+            {available.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+    </fieldset>
   );
 }

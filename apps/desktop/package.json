@@ -19,7 +19,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --root ../.. apps/desktop/src",
     "test:smoke": "node scripts/smoke-runner.mjs",
-    "test:acceptance": "node scripts/acceptance-runner.mjs"
+    "test:acceptance": "node scripts/acceptance-runner.mjs",
+    "perf:probe": "electron-vite build && electron scripts/perf-probe.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",

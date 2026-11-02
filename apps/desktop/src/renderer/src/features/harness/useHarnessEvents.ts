@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AgentEventItem } from "../../../../shared/agent-events";
 import { appendAgentEvents } from "../../../../shared/agent-events";
 import type { AgentEvent } from "../../../../shared/contracts";
+import { createBatcher } from "./refresh-scheduler";
 
 function relevant(event: AgentEvent): boolean {
   return (
@@ -31,17 +32,25 @@ export function useHarnessEvents(sessionId: string | undefined) {
     let active = true;
     let loading = true;
     const received: AgentEventItem[] = [];
+    // Tool bursts would otherwise re-render the whole app once per event.
+    const batcher = createBatcher<AgentEventItem>(
+      (batch) => setItems((current) => appendAgentEvents(current, batch)),
+      32,
+      undefined,
+      { leading: true },
+    );
     // Do not consume the chat hub's prepared messages; the chat owns that queue.
     const unsubscribe = window.modus.agent.onEvent((event) => {
       if (event.sessionId !== sessionId || !relevant(event)) return;
       const item = { id: crypto.randomUUID(), event, createdAt: new Date().toISOString() };
       if (loading) received.push(item);
-      setItems((current) => appendAgentEvents(current, [item]));
+      batcher.push(item);
     });
     void window.modus.agent
       .listEvents(sessionId)
       .then((all) => {
         loading = false;
+        batcher.discard();
         if (active) {
           const history = all.filter((item) => relevant(item.event));
           const seen = new Set(history.map((item) => JSON.stringify(item.event)));
@@ -61,6 +70,7 @@ export function useHarnessEvents(sessionId: string | undefined) {
       });
     return () => {
       active = false;
+      batcher.discard();
       unsubscribe();
     };
   }, [sessionId]);
