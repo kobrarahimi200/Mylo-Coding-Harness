@@ -1,311 +1,106 @@
-<p align="center">
-  English | <a href="./README.zh-CN.md">简体中文</a>
-</p>
+Mylo Coding Harness
+Local-first desktop coding workspace powered by the Pi agent runtime. Mylo connects repository exploration, implementation planning, human approval, file edits, command execution, validation, and review inside an Electron app.
+Project status: In development. Features described below exist in the project source, but some integrations, model/provider configurations, UI navigation, and Windows sandbox dependencies still require end-to-end verification. A successful build alone is not proof of a fully working coding harness.
 
-<p align="center">
-  <img alt="Modus logo" src="./docs/media/modus-logo.png" width="96" height="96">
-</p>
-
-<h1 align="center">Mylo Coding Harness</h1>
-
-<p align="center">
-  Local-first desktop workspace for AI coding agents.
-</p>
-
-<p align="center">
-  <a href="#getting-started">Getting started</a> ·
-  <a href="#features">Features</a> ·
-  <a href="./docs/architecture/desktop-security.md">Security</a>
-</p>
-
-![Modus desktop UI](./docs/media/modus-ui.png)
-
-## About
-
-Mylo Coding Harness (the app is still named Modus in code and some assets) is an open-source desktop app for running AI coding agents inside real local projects.
-
-Open a workspace, connect your PI model provider, chat with PI, and inspect your project in one window.
-
-Mylo Coding Harness is early and currently runs best from source.
-
-**Attribution:** this project is derived from [Modus by brandlll-lee](https://github.com/brandlll-lee/modus), licensed under Apache-2.0. The original license is preserved in [LICENSE](./LICENSE).
-
-## Features
-
-- **Workspaces and sessions** - Open local projects, switch recent workspaces, pin projects, and keep separate agent sessions per repo.
-- **Bring your own models** - Configure built-in or custom PI-compatible providers, defaults, reasoning effort, thinking variants, and model limits.
-- **Editing diffs** - Inspect PI's native file edit results in the chat.
-- **Terminal, browser, and files** - Use a real PTY terminal, an in-app browser with tabs and DevTools, and a workspace file explorer.
-- **Files and images** - Select local paths and preview images before sending them to PI.
-- **MCP, skills, and extensions** - Use PI resource discovery, project trust, and extension commands.
-
-## Getting Started
-
-Requirements for Windows and macOS:
-
-- Node.js `>= 22.19.0`
-- npm
-- Rust + Cargo
+What Mylo does
+- Workspaces & sessions: Import local repositories and keep separate conversations by workspace.
+- Ask / Plan / Agent modes: Ask read-only questions; propose a plan without editing; or execute a coding task with approval.
+- Human-in-the-loop: Review plans, proposed file changes, sensitive commands, and final results.
+- Pi tools & skills: Access approved file and shell operations through the existing Pi coding-agent integration, with project trust and skill discovery.
+- Validation & self-correction: Run supported npm/Cargo checks with approval and retry corrections up to three times after failed validation.
+- Review & recovery: View changes, validation output and task timelines; keep modifications for manual review or use available checkpoint rollback functionality.
+- Desktop tools: Monaco-based editor, file explorer, terminal, test/log panels and model/provider settings.
+Mylo does not replace the LLM. It orchestrates model reasoning, tooling and approval. Features requiring inference still need a connected and compatible provider or locally configured model.
+Setup
+Prerequisites:
+- Node.js >= 22.19.0 and npm
+- Rust/Cargo, for the native PTY host
 - Git
-
-```bash
+- A supported Pi model provider configured in the desktop app
 git clone https://github.com/kobrarahimi200/Mylo-Coding-Harness.git
 cd Mylo-Coding-Harness
 npm install
 npm run dev
-```
-
-Then click **Import project** in the Projects sidebar and select a local folder.
-Use the project's **…** menu to edit project files, rename its sidebar label, show
-its folder, or remove it from the app. Removing a project preserves its local files
-and saved chats; import the folder again to restore access. **Delete chats** is a
-separate action with a confirmation dialog.
-
-**Edit project files** opens the file explorer and editor. Select a file, edit it,
-and save with Cmd+S on macOS or Ctrl+S on Windows/Linux. Configure a model provider
-in Settings to use the coding agent.
-
-## Development
-
-```bash
+Important: main and development branches may not contain the same feature set. To work with a particular development branch, check it out explicitly after cloning:
+git branch -a
+git switch fix/mylo-harness-acceptance-20261027
+npm install
 npm run dev
-npm run check
-npm run test
-npm --workspace @modus/desktop run typecheck
-npm --workspace @modus/desktop run build
-```
+The dev renderer is pinned to port 5173 (strictPort), so startup fails if the port is taken. Stop the existing dev server first; on macOS, lsof -nP -iTCP:5173 -sTCP:LISTEN shows the process using it. Mylo is single-instance: a leftover Electron process silently blocks new launches (and shows a blank window if its dev server died), so quit or kill it before restarting.
 
-Package locally:
+The renderer URL alone is not a standalone app: run it through Electron so its preload and IPC workspace APIs are available.
+First run
+1. Select Import project or Open Project, then choose a local repository.
+2. Open Settings to connect and test a supported model provider.
+3. Use the model selector to pick an available/configured model. The model list is determined by the Pi registry, configured credentials, provider support and account restrictions; it is not an unrestricted list of all models.
+4. Choose the interaction mode in the chat composer:
+   - Ask: Read-only repository questions, no file edits.
+   - Plan: Inspect repository files and produce a reviewable plan.
+   - Agent: Request implementation and approve the plan once; file changes in the approved plan are applied without further prompts. Shell commands and the validation step still ask separately. Then review real changes and validation.
+5. Use the left rail (Chats, Projects, File Explorer, Skills, Tests, History) and the right panel (Files, Browser, Terminal) for details. Some views depend on a workspace or active session.
 
-```bash
-npm --workspace @modus/desktop run package:win -- --publish never
-npm --workspace @modus/desktop run package:mac -- --publish never
-```
+The app uses a light theme by default; a theme stored from an earlier run may override it.
+Harness flow
+User task
+  -> Pi read-only planning
+  -> Human review/approval
+  -> Pi tool execution (subject to permissions and sandbox)
+  -> Approved validation commands
+  -> At most three self-correction retries, if validation fails
+  -> Final review and saved execution history
+Approval types are different: plan approval authorizes the task and its file changes; shell commands and validation are approved separately; final review accepts or leaves the result for inspection. Rejecting or keeping files for manual review is not evidence of a provider failure.
 
-Run the Windows command on Windows and the macOS command on macOS.
+Validation states: Passed, Failed, Skipped (by user) and Not Configured (no applicable scripts). A skipped or missing validation step must never be reported as passed.
+Models and performance
+Mylo discovers Pi-compatible models through its provider registry and filters them based on authentication and account configuration. To access alternative or faster options, configure their provider first and refresh the catalog in Settings. Model latency depends on network, backend/model choice, context size, thinking level and the time consumed by tool calls, approval and tests. "Fast" must not be hardcoded as a promise or used to bypass safety checks.
 
-## MCP Config
-
-Modus uses PI's MCP configuration and the MCP extension selected by PI:
-
-```text
-~/.pi/agent/mcp.json
-<workspace>/.pi/mcp.json
-```
-
-`PI_CODING_AGENT_DIR` selects a different global directory. Project resources follow
-PI's trust rules. Installed MCP extensions own their configuration discovery and credentials.
-
-## Tech Stack
-
-Electron, React, TypeScript, Tailwind CSS, Base UI, Motion, Monaco, xterm.js, Streamdown, Rust `portable-pty`, `@earendil-works/pi-coding-agent`.
-
-## Contributing
-
-Contributions are welcome. Keep PRs small, use Conventional Commits, and run `npm run check` plus `npm run test` before opening a PR.
-
-## License
-
-Apache-2.0. See [LICENSE](./LICENSE).
-
-## Navigation
-
-The left rail has one highlighted current page (`aria-current="page"`):
-
-| Icon | Behavior |
-| --- | --- |
-| Projects | Toggles the project sidebar (pressed state, not a page) |
-| Chat | Chat view; the single place to start a task |
-| File Explorer | File tree and editor (needs an open project) |
-| Skills | Skill management (needs an open project) |
-| Tests | Toggles the bottom Tests panel |
-| History | Run timeline (needs an open project) |
-| Settings | Settings page |
-
-Navigating to a view closes the Tests tab so no panel is left covering the content. Behavior is covered by `navigation.test.ts` and `NavigationRail.test.tsx`.
-
-## Model setup and selection
-
-- Configure providers in **Settings → Models and providers**. Credentials stay in Pi's own `auth.json` / `models.json`; Mylo does not copy them.
-- The model picker lists every model Pi knows. Models you cannot use are shown disabled with a reason (missing credentials, or not in the signed-in ChatGPT account's catalog).
-- Search by name or provider, and filter by **All / Available / Fast**.
-- **Fast** is never inferred from names or hardcoded IDs. A model is marked Fast only after **Test connection** measured a completion at or below 2.5 s on this machine; the measurement is stored locally.
-- Settings can store a separate default model for **Ask** and **Agent** mode. They apply to new chats started from the home composer; models inside an existing chat change only manually.
-- Thinking levels (including Off/Low) appear only for models whose Pi metadata supports them.
-
-## Performance notes
-
-Changes: the project explorer coalesces filesystem-watch events (750 ms trailing window, max 1.5 s in the watcher) and refreshes only expanded folders that contain a changed path; agent events are batched into one React update per 32 ms without dropping any event.
-
-Measured with `npm run perf:probe -w apps/desktop` (real Electron, loopback fake model, single runs on a busy development Mac, so treat as indicative only):
-
-| Scenario | Before | After |
-| --- | --- | --- |
-| 12 writes, 400 ms apart, into 1 of 3 expanded folders: `files:list` calls | 60 | 18 |
-| Same: `git:changes` calls | 12 | 6 |
-| 60 writes at 25 ms (dense burst): `files:list` calls | 2 | 3 |
-| Startup, first interactive render, streaming frame gaps, session switch | unchanged within noise | unchanged within noise |
-
-The dense burst is slightly worse because of the max-wait flush that guarantees updates during continuous writes. Duplicate `agent:event` listeners (agent view and harness view) and a second file listing in the Files panel are not yet deduplicated.
-
-## Testing
-
-```bash
-npm run check          # biome + typecheck
-npm run test           # vitest
-npm run test:smoke -w apps/desktop       # real Electron smoke (macOS)
-npm run test:acceptance -w apps/desktop  # real Electron acceptance (macOS)
-```
-
-## Known issues and limits
-
-- Windows: the real-Electron smoke/acceptance runners are macOS-only. WSL2 isolation requires a prepared self-hosted runner; hosted CI alone does not prove it.
-- Run state is held in memory; a task interrupted by quitting the app is shown as cancelled on reopen, not resumed.
-- Model speed has no verified provider metadata; Fast requires a local connection test.
-- Performance figures above come from single runs and are not a benchmark suite.
-
-## Mylo harness workflow
-
-1. Start the **desktop app** with `npm run dev`. Opening the Vite renderer URL in a
-   browser does not load Electron's preload API and cannot access local projects.
-2. Choose **Open Project**, then configure a Pi model provider in Settings.
-3. Submit a coding request in Chat. The existing Pi session explores the project
-   with read-only file tools and returns a repository-specific JSON plan.
-4. Edit the goal and steps in the review dialog, then approve or reject execution.
-5. Approve commands and code mutations individually. Proposed code appears in an
-   editable Monaco diff before it is applied. Unknown extension tools without a
-   confinement policy and commands requiring unavailable isolation stay blocked.
-6. Approve validation. Mylo discovers npm `test`, `lint`, `typecheck` / `check`, and
-   Cargo `test` / `check` commands where available. Tests, Logs, and Problems show
-   actual output and exit codes. Missing or skipped checks are explicitly marked.
-7. Failed validation is fed back into the same Pi session, with at most **three
-   corrections** after the first validation attempt. Stop agent cancels approvals,
-   Pi execution, and validation subprocesses.
-8. Review diffs and validation before accepting the result. Keeping a result for
-   manual review preserves approved file edits on disk; it does not roll them back.
-
-Use the left rail for Projects, File Explorer, Skills, Tests, History, and Settings.
-The main editor and file tree, project sidebar, right inspector, agent panel, and
-bottom output panel retain or provide resizing controls. Project and session
-selection restore only when they still refer to an imported project.
-
-### Custom Pi skills
-
-Create `.pi/skills/my-review/SKILL.md` in your project:
-
-```markdown
----
-name: my-review
-description: Review the project's error handling and regression tests.
----
-Read the relevant source and tests. Explain failure cases and propose a small fix.
-```
-
-Open an active session's **Skills** view. Enable/disable discovered skills with the
-checkbox, or use **Add skill folder** for another trusted directory. Reload
-configuration after adding a skill on disk. Disabled skills are persisted and
-filtered from Pi's actual resource loader and slash commands. Stop the current
-task before changing skills. Existing Pi extensions still use Pi's discovery and
-project-trust flow; Mylo does not run a separate agent engine.
-
-### Verification and installers
-
-```bash
+For troubleshooting, record timings separately for model response, Pi tool calls, validation, workspace scanning and renderer updates. Use the production build for representative UI performance measurements; dev mode includes additional overhead.
+Verification
 npm run check
 npm test
-cargo test --workspace
-npm run build
+npm --workspace @modus/desktop run typecheck
+npm --workspace @modus/desktop run build
 npm --workspace @modus/desktop run test:smoke
 npm --workspace @modus/desktop run test:acceptance
-```
+The acceptance runner in the development branch is designed to use a temporary Vue + TypeScript project and controlled model responses. This is not the same as verifying an external model or the app on Windows. See the source scripts for platform requirements and exclusions.
 
-The Electron smoke runner uses temporary projects/preferences, checks empty
-startup and real PTY output, and launches a second process to verify restoration. On macOS it also verifies
-reopening a closed window without registering duplicate IPC handlers.
-Pi integration tests use deterministic provider responses; they do not validate
-an external provider's credentials or service availability.
+A useful manual acceptance task:
+In Agent mode, create mylo-proof.js exporting add(a,b), wait for approval, write it using a real file tool, read it back, execute a small test, and show the recorded tool events and actual file diff.
 
-`test:acceptance` runs on macOS and launches an isolated Electron window with a
-minimal Vue + TypeScript project. A loopback model fixture drives the existing Pi
-engine through read-only exploration, editable plan approval, file diff approval,
-real failing npm tests, correction, passing tests/typecheck, and final acceptance.
-Only inference is mocked; the desktop UI, Pi tools, Vue compiler, TypeScript, and
-sandboxed subprocesses are real. Dependencies are copied from installed dev
-packages into the temporary workspace so tests need no downloads or credentials.
-
-Validation results distinguish **PASSED**, **FAILED**, **SKIPPED** (user choice),
-and **NOT CONFIGURED** (no supported scripts). Final review explicitly states
-whether validation passed; accepting a result does not turn skipped checks into
-successful checks.
-
-An additional opt-in macOS test uses your existing Pi sign-in and selected model
-to exercise real planning, editable file approval, an intentionally failing npm
-test, correction, and a passing rerun. It sends only a generated temporary fixture
-to the provider, isolates project/settings context, and does not copy credentials:
-
-```bash
-MYLO_LIVE_HARNESS=1 npx vitest run apps/desktop/src/main/agent/pi-sdk-runtime.live.test.ts
-```
-
-It defaults to `openai/gpt-6.1-sol`; set `MYLO_LIVE_MODEL=provider/model` to use
-another connected model. Normal `npm test` skips this network-dependent test.
-
-Build the Windows installer **on Windows** with Node.js, Rust, and Git installed:
-
-```powershell
+Verify the file on disk and command exit code independently. Generated text claiming success is not sufficient.
+Windows
+Build and package on Windows with Node.js, Rust and Git:
 npm ci
 npm run check
 npm test
 npm run build
-npm --workspace @modus/desktop run test:smoke
 npm --workspace @modus/desktop run package:win -- --x64 --publish never
-```
+Sandbox caveat: Agent shell commands on Windows currently rely on a configured WSL environment with Bash and Bubblewrap plus the required Linux toolchain. The standard Windows installer does not automatically guarantee those dependencies are present. The native terminal and isolated agent execution are separate concerns. Do not disable isolation to work around missing dependencies.
+Custom skill example
+Create <workspace>/.pi/skills/my-review/SKILL.md:
+---
+name: my-review
+description: Read repository errors and propose small, testable improvements.
+---
+Inspect the relevant source and tests. State what you verified versus inferred.
+Then open Skills and enable it. Project resources follow Pi's existing trust rules.
 
-The Windows workflow uploads `Mylo-Coding-Harness-*-Setup.exe`. Packaging checks
-for a Windows native PTY executable and never substitutes a macOS/Linux helper.
-Windows agent shell execution requires WSL, bubblewrap, bash, and the project's
-Linux toolchain. The interactive terminal uses the native Windows PTY helper.
-Before an agent command, Mylo checks the default WSL distribution's tools and
-actually creates an isolated namespace. Missing distributions, dependencies, or
-namespace permissions stop execution with setup instructions. It never runs the
-agent command in an unrestricted Windows shell. Windows paths are converted with
-`wslpath`; only the approved project is mounted at `/workspace`. Provider
-credentials, Windows drives, and the host network are not exposed to that sandbox.
-
-For the Windows sandbox, install WSL 2 and complete the default distro's first
-launch. On Ubuntu install `bubblewrap`, `util-linux`, and system-wide Linux
-Node.js/npm (under `/usr` or `/usr/local`), plus project dependencies. Projects
-using other Linux toolchains must provide them under `/usr`, `/usr/local`, or
-inside the approved project directory.
-The sandbox has no network access, so install dependencies before agent execution.
-Run the real isolation checks on a configured Windows machine with PowerShell:
-
-```powershell
-$env:MYLO_WSL_TESTS = "1"
-npx vitest run apps/desktop/src/main/harness/windows-sandbox.live.test.ts
-```
-
-The Windows workflow's optional `verify_wsl` input runs those checks on a
-self-hosted Windows x64 runner labeled `mylo-wsl2`. The normal hosted Windows job
-checks, builds, tests the native terminal, and packages the x64 installer. The
-optional WSL job requires that prepared runner; hosted packaging alone does not
-prove WSL isolation works. See [WSL commands](https://learn.microsoft.com/en-us/windows/wsl/basic-commands)
-and [Bubblewrap](https://github.com/containers/bubblewrap/blob/main/README.md).
-Local verification results and file inventory: [implementation report](docs/mylo-implementation-report.md).
-
-### Recovering a failed model connection
-
-If a task stops during planning, use **Connect / change provider** in the task's
-recovery panel. The original request, context, and attachments remain available
-for **Retry task**.
-
-For ChatGPT authentication, open **Settings → Model & Provider → OpenAI → Sign in
-with ChatGPT**, then complete the browser consent flow. Pi manages the credential
-and installation identity. Mylo fetches the signed-in account's model catalog;
-API models outside that catalog are not offered as ChatGPT choices. Select a
-listed model, use **Test connection**, then **Use model** to update the current
-session and default. Finding credentials alone does not prove a model request
-will succeed.
-
-The integration follows the [official model-list and inference contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
-Authentication does not silently fall back to the API-key billing path.
+You can also manage skills in the app: Skills → New skill creates, and Edit/Delete modify, a SKILL.md in the Pi agent directory's skills/ folder (name: lowercase letters, digits and hyphens, up to 64 characters). Editing and deleting are limited to skills created this way and are blocked while the agent is running.
+Architecture
+- Desktop: Electron, React, TypeScript, Tailwind CSS
+- Editor/terminal: Monaco, xterm.js, native Rust PTY
+- Agent: @earendil-works/pi-coding-agent
+- Main harness: apps/desktop/src/main/harness/
+- Agent integration: apps/desktop/src/main/agent/pi-sdk-runtime.ts
+- Renderer: apps/desktop/src/renderer/src/
+- Secure bridge: apps/desktop/src/preload/
+- Shared packages: packages/ (agent-protocol, config, core, ui); apps/web is a placeholder
+- Docs: docs/architecture/
+Known limitations / work in progress
+- Some sidebar icons do not provide a distinct visible navigation state in older builds.
+- Switching sessions and restoring task/review state require regression testing.
+- Model options are restricted by configured providers and authorized account access.
+- Performance should be profiled with real usage; startup/build success is not a latency benchmark.
+- Windows sandboxed execution requires external WSL/Bubblewrap configuration and live testing.
+License
+Apache-2.0. See LICENSE. Mylo incorporates work derived from the Modus desktop project; preserve attribution and notices where required.
